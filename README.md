@@ -73,10 +73,13 @@ The implementation is derived from [nbe-for-mltt](https://github.com/jozefg/nbe-
 ## Zoe's TODO list
 
 - [x] Add `force` to `src/lib/check.ml` to allow type-checking metavariables; or
-- [ ] Add a pass to replace metavariables with their solutions (this is pretty
+- [x] Add a pass to replace metavariables with their solutions (this is pretty
   tricky on account of top level definitions using de Bruijn variables)
 - [ ] Track when a metavariable m is solved in terms of another metavariable n,
   and when n is solved, update the solution of m
 - [ ] Replace remaining uses of `add_term` with `add_var`
-- [ ] Copy examples from elab zoo
+- [x] Copy examples from elab zoo
 - [ ] Add pruning (this might allow solving the motive of non-dependent eliminators)
+- [ ] Find reference of proof that solving metavariables works (for pattern fragment)
+    - [ ] Read it
+- [ ] Fix the bug in stream.tt

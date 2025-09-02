@@ -56,6 +56,8 @@ let consT
     = fun A x xs ->
         transp_inv ?cons1 ?cons2 (lob1Beta (StrRec ?cons3)) (pair (x, xs))
 
+quit
+
 let unconsT
     : (A : {d | U<0>}) -> (StrT A) -> (<< d | A >> * << l | StrT A >>) @ T
     = fun A xs ->
