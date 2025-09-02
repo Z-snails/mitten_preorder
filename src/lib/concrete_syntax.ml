@@ -1,5 +1,4 @@
 type ident = string
-type uni_level = int
 
 type mode = string
 
@@ -11,8 +10,12 @@ type cell =
   | HComp of cell * cell
   | VComp of cell * cell
 
+(* use U : U to avoid having to think too much. *)
+(* type uni_level = int *)
+type uni_level = unit
+
 type binder = Binder of {name : ident; body : t}
-and bindern = BinderN of {names : ident list; body : t}
+and bindern = BinderN of {names : (m option * ident) list; body : t}
 and binder2 = Binder2 of {name1 : ident; name2 : ident; body : t}
 and binder3 = Binder3 of {name1 : ident; name2 : ident; name3 : ident; body : t}
 and t =
@@ -25,7 +28,7 @@ and t =
   | NRec of {mot : binder; zero : t; suc : binder2; nat : t}
   | Pi of m * t * binder
   | Lam of bindern
-  | Ap of t * (m * t) list
+  | Ap of t * (m option * t) list
   | Sig of t * binder
   | Pair of t * t
   | Fst of t
@@ -37,6 +40,7 @@ and t =
   | TyMod of m * t
   | Mod of m * t
   | Letmod of m * m * binder * binder * t
+  | Hole of ident option
 
 type decl =
     Def of {name : ident; def : t; tp : t; md : mode}

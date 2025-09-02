@@ -1,0 +1,91 @@
+;; Handling of the Id type
+let transp : (A : U<0>) -> (B : U<0>) -> (Id _ A B) -> A -> B @ T =
+    fun _ _ eq -> match eq at a b p -> (a -> b) with
+        | refl c -> (fun x -> x)
+
+let inv1 : (A : U<0>) -> (B : U<0>) -> (Id _ A B) -> Id _ B A @ T =
+    fun A B eq -> match eq at a b p -> (Id _ b a) with
+        | refl c -> refl c
+
+let transp_inv : (A : U<0>) -> (B : U<0>) -> (Id _ A B) -> B -> A @ T =
+    fun A B eq y -> transp _ _ (inv1 A B eq) y
+
+let next : (A : U<0>) -> A -> << l | A >> @ T =
+    fun A x -> mod l x
+
+;; Loeb induction
+axiom lob : (A : U<0>) -> ({l | A} -> A) -> A @ T
+axiom lobBeta : (A : U<0>) -> (f : {l | A} -> A) -> Id _ (lob _ f) (f (lob _ f)) @ T
+
+axiom lob1 : ({l | U<0>} -> U<0>) -> U<0> @ T
+axiom lob1Beta : (f : {l | U<0>} -> U<0>) -> Id _ (lob1 f) (f (lob1 f)) @ T
+
+;; Natural numbers
+axiom add : Nat -> Nat -> Nat @ S
+
+;; Non-dependent k
+let k : (A : U<0>) -> (B : U<0>) -> << l | A -> B >> -> << l | A >> -> << l | B >> @ T =
+    fun A B f x ->
+    letmod idm mod l (f0) <- f at _ -> << l | B >> in
+    letmod idm mod l (x0) <- x at _ -> << l | B >> in
+    mod l (f0 x0)
+
+let DNat : U<0> @ T = << d | Nat >>
+
+let addT : DNat -> DNat -> DNat @ T =
+    fun x -> fun y ->
+    letmod idm mod d (x0) <- x at _ -> DNat in
+    letmod idm mod d (y0) <- y at _ -> DNat in
+    mod d (add x0 y0)
+
+;; Streams
+let StrRec : {d | U<0>} -> {l | U<0>} -> U<0> @ T =
+    fun A x -> << d | A >> * << l | x >>
+
+let StrT : {d | U<0>} -> U<0> @ T =
+    fun A -> lob1 (StrRec A)
+
+let Str : U<0> -> U<0> @ S =
+    fun A -> << g | StrT A >>
+
+;quit
+
+;; pair (x, xs) but uses lob1Beta to make that type check
+let consT
+    : (A : {d | U<0>}) -> << d | A >> -> << l | StrT A >> -> StrT A @ T
+    = fun A x xs ->
+        transp_inv ?cons1 ?cons2 (lob1Beta (StrRec ?cons3)) (pair (x, xs))
+
+let unconsT
+    : (A : {d | U<0>}) -> (StrT A) -> (<< d | A >> * << l | StrT A >>) @ T
+    = fun A xs ->
+        transp _ _ (lob1Beta (StrRec _)) xs
+
+let NatStrT : U<0> @ T = StrT Nat
+
+let fibT : NatStrT @ T =
+    lob
+        (DNat -> DNat -> StrT Nat)
+        (fun g x y -> consT _ x (mod l (g y (addT x y))))
+        (mod d 0) (mod d 1)
+
+;; Hurray!
+let fib : Str Nat @ S = mod g fibT
+
+let head : (A : U<0>) -> (Str A) -> A @ S =
+    fun A xs ->
+    letmod idm mod g (xs0) <- xs at _ -> A in
+    letmod g mod d (x0) <- fst (unconsT _ xs0) at _ -> A in
+    x0
+
+let compgl : (A : {g | U<0>}) -> (<< g | << l | A >> >>) -> << g | A >> @ S =
+    fun A x ->
+    letmod idm mod g (x0) <- x at _ -> << g | A >> in
+    letmod g mod l (x1) <- x0 at _ -> << g | A >> in
+    mod g x1
+
+; let tail : (A : U<0>) -> (Str A) -> Str A @ S =
+;     fun A xs ->
+;     letmod idm (fun _ -> A) mod g (xs0) <- xs in
+;     ;; compgl {g, StrT {d, A}} (mod g (snd (unconsT {d, A} xs0)))
+;     compgl {g, StrT {d, A}} (hole << g | << l | StrT {d, A} >> >>)

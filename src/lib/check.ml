@@ -2,14 +2,7 @@ module D = Domain
 module Syn = Syntax
 open Mode_theory
 
-(* The mode is the domain of the modality mu. This is needed because the implementation of modalities is ambiguous for identity modalitities.*)
-type env_entry =
-    Term of {term : D.t; mu : m; tp : D.t; md : mode}
-  | TopLevel of {term : D.t; tp : D.t; md : mode}
-  | M of m
-type env = env_entry list
-
-let add_term ~md ~term ~mu ~tp env = Term {term; mu; tp; md} :: env
+open Meta.Check_env
 
 type error =
     Cannot_synth_term of Syn.t
@@ -40,46 +33,21 @@ exception Type_error of error
 
 let tp_error e = raise (Type_error e)
 
-let env_to_sem_env =
-  List.map
-    (function
-      | TopLevel {term; _} -> D.Val term
-      | Term {term; mu = _; tp = _} -> D.Val term
-      | M mu -> D.M mu)
-
-let rec nth_lockless lst i =
-  match lst with
-  | [] -> tp_error (Misc "nth_lockless should not reach the empty list")
-  | head :: lst ->
-    match head with
-    | Term {term; mu; tp; md} -> if Int.equal i 0 then (Term {term ; mu; tp; md} , idm)
-      else if i > 0 then nth_lockless lst (i - 1)
-      else tp_error (Misc "nth_lockless does not accept negativ Input")
-    | TopLevel {term ; tp; md} -> if Int.equal i 0 then (TopLevel {term ; tp; md} , idm)
-      else if i > 0 then nth_lockless lst (i - 1)
-      else tp_error (Misc "nth_lockless does not accept negativ Input")
-    | M mu -> let (tm, nu) = nth_lockless lst i in
-      (tm , compm (nu, mu))
-
-let nth_tm lst i = fst (nth_lockless lst i)
-let nth_cell lst i = snd (nth_lockless lst i)
-
-let get_var env n = match nth_tm env n with
-  | Term {term = _; mu; tp; md} -> (Some mu, tp, md)
-  | TopLevel {tp; term = _; md} -> (None, tp, md)
-  | _ -> raise (Type_error (Misc "This case of get_var should not be reached"))
-
 let assert_subtype m size t1 t2 term =
   if Nbe.check_tp m ~subtype:true size t1 t2
   then ()
-  else tp_error (Type_mismatch (Nbe.read_back_tp size t1, Nbe.read_back_tp size t2, term))
+  else
+    (Printf.printf "About to readback %s and %s\n" (Domain.show t1) (Domain.show t2);
+    tp_error (Type_mismatch (Nbe.read_back_tp size t1, Nbe.read_back_tp size t2, term)))
 
 let assert_equal m size t1 t2 tp =
   let nf1 = D.Normal {tp; term = t1} in
   let nf2 = D.Normal {tp; term = t2} in
   if Nbe.check_nf m size nf1 nf2
   then ()
-  else tp_error (Term_or_Type_mismatch (Nbe.read_back_nf size nf1, Nbe.read_back_nf size nf2))
+  else
+    (Printf.printf "About to readback %s and %s\n" (Domain.show t1) (Domain.show t2);
+    tp_error (Term_or_Type_mismatch (Nbe.read_back_nf size nf1, Nbe.read_back_nf size nf2)))
 
 let check_mode m n tm =
   match eq_mode m n with
@@ -101,10 +69,10 @@ let rec check ~env ~size ~term ~tp ~m =
   | Syn.Let (def, body) ->
     let def_tp = synth ~env ~size ~term:def ~m in
     let def_val = Nbe.eval def (env_to_sem_env env) in
-    check ~env:(add_term ~md:m ~term:def_val ~mu:idm ~tp:def_tp env) ~size:(size + 1) ~term:body ~tp ~m
+    check ~env:(add_term ~md:m ~term:def_val ~mu:idm ~tp:def_tp ~defined:true env) ~size:(size + 1) ~term:body ~tp ~m
   | Syn.Nat ->
     begin
-      match tp with
+      match Nbe.force size tp with
       | D.Uni _ -> ()
       | p -> tp_error (Expecting_universe (Nbe.read_back_tp size p))
     end
@@ -123,7 +91,7 @@ let rec check ~env ~size ~term ~tp ~m =
     check ~env:(add_term ~md:new_mode ~term:var ~mu:mu ~tp:l_sem env) ~size ~term:r ~tp ~m
   | Syn.Lam f ->
     begin
-      match tp with
+      match Nbe.force size tp with
       | D.Pi (mu, src , dest) ->
         let new_mode = dom_mod mu m in
         let var = D.mk_var src size in
@@ -133,7 +101,7 @@ let rec check ~env ~size ~term ~tp ~m =
     end
   | Syn.Pair (left, right) ->
     begin
-      match tp with
+      match Nbe.force size tp with
       | D.Sig (left_tp, right_tp) ->
         check ~env ~size ~term:left ~tp:left_tp ~m;
         let left_sem = Nbe.eval left (env_to_sem_env env) in
@@ -142,11 +110,13 @@ let rec check ~env ~size ~term ~tp ~m =
     end
   | Syn.Uni i ->
     begin
-      match tp with
-      | Uni j when i < j -> ()
+      match Nbe.force size tp with
+      (* | Uni j when i < j -> () *)
+      | Uni _ -> ()
       | t ->
         let msg =
-          "Expecting universe over " ^ string_of_int i ^ " but found\n" ^ d_pp size t in
+          (* "Expecting universe over " ^ string_of_int i ^ " but found\n" ^ d_pp size t in *)
+          "Expecting universe but found\n" ^ d_pp size t in
         tp_error (Misc msg)
     end
   | Syn.TyMod (mu, a) ->
@@ -157,7 +127,7 @@ let rec check ~env ~size ~term ~tp ~m =
   | Syn.Mod (mu, tm) ->
     check_mode (cod_mod mu m) m term;
     begin
-      match tp with
+      match Nbe.force size tp with
       | D.Tymod (nu, tp1) ->
         begin
         match eq_mod mu nu with
@@ -171,7 +141,7 @@ let rec check ~env ~size ~term ~tp ~m =
     end
   | Id (tp', l, r) ->
     begin
-      match tp with
+      match Nbe.force size tp with
       | D.Uni _ ->
         check ~env ~size ~term:tp' ~tp ~m;
         let tp' = Nbe.eval tp' (env_to_sem_env env) in
@@ -181,7 +151,7 @@ let rec check ~env ~size ~term ~tp ~m =
     end
   | Refl term ->
     begin
-      match tp with
+      match Nbe.force size tp with
       | D.Id (tp, left, right) ->
         check ~env ~size ~term ~tp ~m;
         let term = Nbe.eval term (env_to_sem_env env) in
@@ -194,8 +164,7 @@ let rec check ~env ~size ~term ~tp ~m =
 and synth ~env ~size ~term ~m =
   match term with
   | Syn.Var id ->
-    let (mu, tp, md) = get_var env id in
-    let locks = nth_cell env id in
+    let (mu, tp, md, locks) = get_var env id in
     (*  Verify whether the toplevel definitions are used at the correct 0-cell,
         (we also check terms, but they should be fine anyways)
      *  It also validates that mu has the correct boundary, since we only allow entries where md is the domain of mu *)
@@ -213,7 +182,7 @@ and synth ~env ~size ~term ~m =
   | Syn.Let (def, body) ->
     let def_tp = synth ~env ~size ~term:def ~m in
     let def_val = Nbe.eval def (env_to_sem_env env) in
-    synth ~env:(add_term ~md:m ~term:def_val ~mu:idm ~tp:def_tp env) ~size:(size + 1) ~term:body ~m
+    synth ~env:(add_term ~md:m ~term:def_val ~mu:idm ~tp:def_tp ~defined:true env) ~size:(size + 1) ~term:body ~m
   | Syn.Check (term, tp') ->
     let tp = Nbe.eval tp' (env_to_sem_env env) in
     check ~env ~size ~term ~tp ~m;
@@ -222,13 +191,13 @@ and synth ~env ~size ~term ~m =
   | Syn.Suc term -> check ~env ~size ~term ~tp:Nat ~m; D.Nat
   | Syn.Fst p ->
     begin
-      match (synth ~env ~size ~term:p ~m) with
+      match Nbe.force size (synth ~env ~size ~term:p ~m) with
       | Sig (left_tp, _) -> left_tp
       | t -> tp_error (Misc ("Expecting Sig but found\n" ^ d_pp size t))
     end
   | Syn.Snd p ->
     begin
-      match (synth ~env ~size ~term:p ~m) with
+      match Nbe.force size (synth ~env ~size ~term:p ~m) with
       | Sig (_, right_tp) ->
         let proj = Nbe.eval (Fst p) (env_to_sem_env env) in
         Nbe.do_clos right_tp proj
@@ -237,9 +206,9 @@ and synth ~env ~size ~term ~m =
   | Syn.Ap (mu, f, a) ->
     begin
       check_mode (cod_mod mu m) m term;
-      match (synth ~env ~size ~term:f ~m) with
-      | D.Pi (nu , src , dest) ->
-        check_mod mu nu term (Nbe.read_back_tp size (D.Pi (nu , src , dest)));
+      match Nbe.force size (synth ~env ~size ~term:f ~m) with
+      | D.Pi (nu, src, dest) as t ->
+        check_mod mu nu term (Nbe.read_back_tp size t);
         let new_env = (M mu :: env) in
         let new_mode = dom_mod mu m in
         check ~env:new_env ~size ~term:a ~tp:src ~m:new_mode;
@@ -264,21 +233,27 @@ and synth ~env ~size ~term ~m =
       ~tp:suc_tp
       ~m ;
     Nbe.eval mot (Val (Nbe.eval n sem_env) :: sem_env)
+
+  (* letmod mu (mot) mod nu (_) <- tm in deptm *)
   | Syn.Letmod (mu, nu, mot, deptm, tm) ->
     begin
-      let cod_mu = m in
+      let cod_mu = cod_mod mu m in (* Used to be m, should this calculate the codomain of mu? *)
       let dom_mu = dom_mod mu m in
-      check_mode cod_mu m term;
+      check_mode cod_mu m term; (* TODO: This seems dodgy? cod_mu = m so why check? *)
       let new_env = M mu :: env in
       let new_mode = dom_mu in
       let tp1 = synth ~env:new_env ~size ~term:tm ~m:new_mode in
-      match tp1 with
+      match Nbe.force size tp1 with
       | D.Tymod (nu1, tp) ->
-        check_mod nu nu1 tm (Nbe.read_back_tp size tp1) ;
-        let new_head = Term {term = D.mk_var (D.Tymod (nu1, tp)) size; mu = mu; tp = D.Tymod (nu1, tp); md = new_mode} in
+        check_mod nu nu1 tm (Nbe.read_back_tp size tp1);
+        let new_head = Term
+          { term = D.mk_var (D.Tymod (nu1, tp)) size; mu = mu
+            ; tp = D.Tymod (nu1, tp); md = new_mode; defined = false } in
         let mot_env = new_head :: env in
         check_tp ~env:mot_env ~size:(size + 1) ~term:mot ~m;
-        let deptm_env = Term {term = D.mk_var tp size; mu = compm (mu, nu1); tp = tp; md = dom_mod (compm (mu, nu1)) m} :: env in
+        let deptm_env =
+          add_term ~term:(D.mk_var tp size) ~md:(dom_mod (compm (mu, nu1)) m)
+            ~tp ~mu:(compm (mu, nu1)) env in
         let base_sem_env = env_to_sem_env env in
         let sem_env =  D.Val (D.Mod (nu1, D.mk_var tp size)) :: base_sem_env in
         let sem_deptm_ty = Nbe.eval mot sem_env in
@@ -291,11 +266,11 @@ and synth ~env ~size ~term ~m =
     let eq_tp = synth ~env ~size ~term:eq ~m in
     begin
       let sem_env = env_to_sem_env env in
-      match eq_tp with
+      match Nbe.force size eq_tp with
       | D.Id (tp', left, right) ->
         let mot_var1 = D.mk_var tp' size in
         let mot_var2 = D.mk_var tp' (size + 1) in
-        let mot_var3 = D.mk_var (D.Id (tp', mot_var1, mot_var2)) (size + 1) in
+        let mot_var3 = D.mk_var (D.Id (tp', mot_var1, mot_var2)) (size + 2) in
         let mot_env =
           add_term ~md:m ~term:mot_var1 ~mu:idm ~tp:tp' env
           |> add_term ~md:m ~term:mot_var2 ~mu:idm ~tp:tp'
@@ -308,6 +283,11 @@ and synth ~env ~size ~term ~m =
       | t -> tp_error (Misc ("Expecting Id but found\n" ^ d_pp size t))
     end
   | Syn.Axiom (_, tp) -> Nbe.eval tp (env_to_sem_env env)
+  | Syn.Meta (m, sub) ->
+    let entry = Meta.lookup m in
+    let off = size - entry.size in
+    let sub = List.map (fun t -> lazy (Nbe.eval t (env_to_sem_env env))) sub in
+    Nbe.subst (sub, off) entry.tp
   | _ -> tp_error (Cannot_synth_term term)
 
 and check_tp ~env ~size ~term ~m =
@@ -329,7 +309,7 @@ and check_tp ~env ~size ~term ~m =
   | Syn.Let (def, body) ->
     let def_tp = synth ~env ~size ~term:def ~m in
     let def_val = Nbe.eval def (env_to_sem_env env) in
-    check_tp ~env:(add_term ~md:m ~term:def_val ~mu:idm ~tp:def_tp env) ~size:(size + 1) ~term:body ~m
+    check_tp ~env:(add_term ~md:m ~term:def_val ~mu:idm ~tp:def_tp ~defined:true env) ~size:(size + 1) ~term:body ~m
   | Syn.TyMod (mu, tp) ->
     check_mode (cod_mod mu m) m term;
     let new_env = M mu :: env in
@@ -342,7 +322,7 @@ and check_tp ~env ~size ~term ~m =
     check ~env ~size ~term:r ~tp ~m
   | term ->
     begin
-      match (synth ~env ~size ~term ~m) with
+      match Nbe.force size (synth ~env ~size ~term ~m) with
       | D.Uni _ -> ()
       | t -> tp_error (Expecting_universe (Nbe.read_back_tp size t))
     end

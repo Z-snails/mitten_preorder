@@ -1,0 +1,35 @@
+let id : (A : U<0>) -> A -> A @ S = fun A x -> x
+let id2 : (A : U<0>) -> A -> A @ S = fun _ x -> id _ x
+
+; The following example doesn't work (as expected). Variable x is available at
+; modality 1 in the problem, but required at l by the metavariable, so it is
+; accessed using the 2-cell 1 <= l which is not the identity.
+; let bad : {l | Nat} -> Nat @ T = fun x -> _
+; let check : (x : Nat) -> Id _ x (bad {l, x}) @ T = fun x -> refl x
+
+let id4 : (A : U<0>) -> A -> A @ S = _
+let check_id4 : (A : U<0>) -> (x : A) -> Id A x (id4 A x) @ S =
+    fun _ x -> refl x
+
+let const : (A : U<0>) -> (B : U<0>) -> A -> B -> A @ S = fun A B -> _
+let check_const : (A : U<0>) -> (B : U<0>) -> (x : A) -> (y : B) -> Id _ x (const _ _ x y) @ S =
+    fun _ _ x y -> refl x
+
+let ap : (A : {l | U<0>}) -> (B : {l | U<0>}) -> << l | A -> B >> -> << l | A >> -> << l | B >> @ T =
+    fun A B f x ->
+        letmod idm mod l (x0) <- x at _ -> << l | B >> in
+        letmod idm mod l (f0) <- f at _ -> << l | B >> in
+        mod l (f0 x0)
+
+; lob induction (type should be inferrable)
+
+axiom lob : (A : _) -> ({ l | A } -> A) -> A @ T
+
+let Str' : U<0> -> U<0> @ T =
+    fun A -> lob _ (fun tail -> A * << l | tail >>)
+
+; let infer_mot : (A : _) -> << l | A >> -> << l | A >> @ T =
+;     fun _ x ->
+;         letmod idm mod l (x0) <- x at _ -> _ in
+;         mod l (x0)
+

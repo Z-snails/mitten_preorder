@@ -1,8 +1,11 @@
 (executables
  (names main)
+ (modes byte exe)
  (libraries normalize_lib cmdliner))
 
 (install
  (section bin)
  (package mitten)
  (files (main.exe as mitten)))
+
+(env (dev (flags (:standard -warn-error -A))))

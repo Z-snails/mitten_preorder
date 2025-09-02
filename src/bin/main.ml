@@ -1,17 +1,23 @@
 open Normalizer
 open Cmdliner
 
-let perform_norm input = Load.load_file input |> Driver.process_sign
+let () = Printexc.record_backtrace true
+
+let perform_norm input =
+  Load.load_file input
+  |> Driver.process_sign
+  |> Driver.print_unsolved_holes
 
 let main input =
   try perform_norm input; 0 with
-  | Invalid_argument s -> Printf.eprintf "Internal error (invalid argument): %s\n" s; 1
-  | Failure s -> Printf.eprintf "Internal error (Failure): %s\n" s; 1
+  (* | Invalid_argument s -> Printf.eprintf "Internal error (invalid argument): %s\n" s; 1 *)
+  (* | Failure s -> Printf.eprintf "Internal error (Failure): %s\n" s; 1 *)
   | Load.Parse_error s -> Printf.eprintf "Frontend error: %s\n" s; 1
   | Nbe.Nbe_failed s -> Printf.eprintf "Internal error (Failed to normalize): %s\n" s; 1
   | Check.Type_error e -> Printf.eprintf "Type error\n%s\n" (Check.pp_error e); 1
   | Syntax.Illformed -> Printf.eprintf "Syntax error.\n"; 1
   | Mode_theory.Modality_error str -> Printf.eprintf "Modality error: %s\n" str; 1
+  | Elab.Elab_error err -> Printf.eprintf "Elaboration error.\n%s\n" (Elab.pp_error err); 1
 
 let input_file =
   let doc = "File containing the term to reduce" in

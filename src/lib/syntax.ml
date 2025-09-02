@@ -1,6 +1,19 @@
 open Sexplib
 open Mode_theory
-type uni_level = int
+
+(* use U : U to avoid having to think too much. *)
+(* type uni_level = int *)
+type uni_level = unit
+
+exception Todo of string
+
+let todo (msg : string) = raise (Todo msg)
+
+type metavar = Metavar of int * string
+
+let show_metavar (Metavar (_, n)) = "?" ^ n
+let pp_metavar (fmt : Format.formatter) m =
+  Format.fprintf fmt "%s" (show_metavar m)
 
 type t =
   | Var of int (* DeBruijn indices for variables *)
@@ -14,6 +27,7 @@ type t =
   | Mod of m * t
   | Letmod of m * m * (* BINDS *) t * (* BINDS *) t * t
   | Axiom of string * t
+  | Meta of metavar * t list
 
 type envhead =
   | Ty of t
@@ -41,8 +55,8 @@ let find_idx ~equal key xs =
       if equal key x then Some i else go (i + 1) xs in
   go 0 xs
 
-let to_sexp env t =
-  let counter = ref 0 in
+let to_sexp ?counter env t =
+  let counter = Option.value counter ~default:(ref 0) in
   let rec int_of_syn = function
     | Zero -> Some 0
     | Suc t ->
@@ -54,9 +68,9 @@ let to_sexp env t =
     | _ -> None in
   let rec go env = function
     (* need pp for cells to pretty print variables also for non trivial cells *)
-    | Var i -> if i >= List.length env
-      then Sexp.Atom ("free" ^ string_of_int i)
-      else List.nth env i
+    | Var i -> Option.value
+      (List.nth_opt env i)
+      ~default:(Sexp.Atom ("free" ^ string_of_int i))
     | Nat -> Sexp.Atom "Nat"
     | Let (def, body) ->
       incr counter;
@@ -81,21 +95,26 @@ let to_sexp env t =
       incr counter;
       let suc_var2 = Sexp.Atom ("x" ^ string_of_int (! counter)) in
       Sexp.List
-        [Sexp.Atom "nrec";
-         Sexp.List [mvar; go (mvar :: env) motive];
-         go env zero;
-         Sexp.List [suc_var1; suc_var2; go (suc_var2 :: suc_var1 :: env) suc];
-         go env n]
+        [ Sexp.Atom "nrec"
+        ; Sexp.List [mvar; Sexp.Atom "->"; go (mvar :: env) motive]
+        ; go env zero
+        ; Sexp.List
+            [ suc_var1; suc_var2; Sexp.Atom "->"
+            ; go (suc_var2 :: suc_var1 :: env) suc ]
+        ; go env n ]
     | Pi (mu, src, dest) ->
       incr counter;
       let var = Sexp.Atom ("x" ^ string_of_int (! counter)) in
-      Sexp.List [Sexp.Atom "Pi"; mod_to_sexp mu; go env src; Sexp.List [var; Sexp.Atom "->"; go (var :: env) dest]]
+      (* Sexp.List [Sexp.Atom "Pi"; mod_to_sexp mu; go env src; Sexp.List [var; Sexp.Atom "->"; go (var :: env) dest]] *)
+      Sexp.List
+        [ Sexp.List [var; Sexp.Atom ":"; mod_to_sexp mu; go env src]
+        ; Sexp.Atom "->"; go (var :: env) dest]
     | Lam t ->
       incr counter;
       let var = Sexp.Atom ("x" ^ string_of_int (! counter)) in
-      Sexp.List [Sexp.Atom "lam"; Sexp.List [var; go (var :: env) t]]
+      Sexp.List [Sexp.Atom "lam"; var; go (var :: env) t]
     | Ap (mu, t1, t2) ->
-      Sexp.List [Sexp.Atom "ap"; mod_to_sexp mu; go env t1; go env t2]
+      Sexp.List [go env t1; mod_to_sexp mu; go env t2]
     | Sig (fst, snd) ->
       incr counter;
       let var = Sexp.Atom ("x" ^ string_of_int (! counter)) in
@@ -104,26 +123,42 @@ let to_sexp env t =
       Sexp.List [Sexp.Atom "pair"; go env t1; go env t2]
     | Fst t -> Sexp.List [Sexp.Atom "fst"; go env t]
     | Snd t -> Sexp.List [Sexp.Atom "snd"; go env t]
-    | Uni i -> Sexp.List [Sexp.Atom "U"; Sexp.Atom (string_of_int i)]
-    | TyMod (mu, tp) -> Sexp.List [Sexp.Atom "<"; mod_to_sexp mu; Sexp.Atom "|"; go env tp; Sexp.Atom ">"]
+    | Uni _ -> Sexp.Atom "U"
+    | TyMod (mu, tp) ->
+      Sexp.List [Sexp.Atom "<"; mod_to_sexp mu; Sexp.Atom "|"; go env tp; Sexp.Atom ">"]
     | Mod (mu, tm) -> Sexp.List [Sexp.Atom "mod"; mod_to_sexp mu; go env tm]
     | Letmod (mu, nu, tymot, deptm, tm) ->
       incr counter;
       let mvar = Sexp.Atom ("x" ^ string_of_int (! counter)) in
       incr counter;
       let tm_var = Sexp.Atom ("x" ^ string_of_int (! counter)) in
-      Sexp.List [Sexp.Atom "let"; mod_to_sexp mu; Sexp.Atom "mod"; mod_to_sexp nu; Sexp.Atom "<-"; go env tm ; Sexp.Atom "in"; Sexp.List [go (tm_var :: env) deptm]; Sexp.Atom "at"; go (mvar :: env) tymot]
+      Sexp.List
+        [ Sexp.Atom "let"; mod_to_sexp mu; Sexp.Atom "mod"; mod_to_sexp nu
+        ; tm_var; Sexp.Atom "<-"; go env tm ; Sexp.Atom "in"
+        ; Sexp.List [go (tm_var :: env) deptm]; Sexp.Atom "at"; go (mvar :: env) tymot
+        ]
     | Id (ty, le, ri) -> Sexp.List [Sexp.Atom "Id"; go env ty; go env le; go env ri]
     | Refl term -> Sexp.List [Sexp.Atom "Refl"; go env term]
     | J (mot, refltm, eq) ->
       incr counter;
-      let rivar = Sexp.Atom ("x" ^ string_of_int (! counter)) in
-      incr counter;
       let levar = Sexp.Atom ("x" ^ string_of_int (! counter)) in
       incr counter;
+      let rivar = Sexp.Atom ("x" ^ string_of_int (! counter)) in
+      incr counter;
       let prfvar = Sexp.Atom ("x" ^ string_of_int (! counter)) in
-      Sexp.List [Sexp.Atom "J"; go (prfvar :: levar :: rivar :: env) mot; go (levar :: env) refltm; go env eq]
-    | Axiom (str, _) -> Sexp.Atom str in
+      Sexp.List
+        [ Sexp.Atom "J"
+        ; Sexp.List
+            [ levar; rivar; prfvar; Sexp.Atom "->"
+            ; go (prfvar :: rivar :: levar :: env) mot ]
+        ; Sexp.List [levar; Sexp.Atom "->"; go (levar :: env) refltm]
+        ; go env eq
+        ]
+    | Axiom (str, _) -> Sexp.Atom str
+    (* TODO: print the spine? *)
+    | Meta (Metavar (_, n), _) -> Sexp.Atom ("?" ^ n)
+  in
   go env t
 
-let pp t = to_sexp [] t |> Sexp.to_string_hum
+let pp ?counter ?names:(names = []) t =
+  to_sexp ?counter (List.map (fun x -> Sexp.Atom x) names) t |> Sexp.to_string_hum

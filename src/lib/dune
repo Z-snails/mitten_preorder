@@ -8,5 +8,10 @@
  (name Normalizer)
  (libraries sexplib menhirLib)
  (flags (:standard -w -9-32-37))
- (modules_without_implementation abstract_mode_theory)
- (public_name normalize_lib))
+ (modules_without_implementation abstract_mode_theory location)
+ (public_name normalize_lib)
+ (preprocess (pps ppx_deriving.show)))
+
+(env
+  (dev
+    (flags (:standard -warn-error -A -w -27))))

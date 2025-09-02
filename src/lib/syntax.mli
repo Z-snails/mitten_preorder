@@ -1,5 +1,15 @@
 open Mode_theory
-type uni_level = int
+
+(* use U : U to avoid having to think too much. *)
+(* type uni_level = int *)
+type uni_level = unit
+
+exception Todo of string
+
+val todo : string -> 'a
+
+type metavar = Metavar of int * string
+
 and t =
   | Var of int (* DeBruijn indices for variables *)
   | Let of t * (* BINDS *) t | Check of t * t
@@ -12,6 +22,11 @@ and t =
   | Mod of m * t
   | Letmod of m * m * (* BINDS *) t * (* BINDS *) t * t
   | Axiom of string * t
+  | Meta of metavar * t list
+
+val pp_metavar : Format.formatter -> metavar -> unit
+val show_metavar : metavar -> string
+
 (*In contrast to the Domain letmod here we do not include the typing information for the modal argument*)
 type envhead =
   | Ty of t
@@ -23,5 +38,5 @@ val env_length : envhead list -> int
 
 exception Illformed
 (*  val of_sexp : Sexplib.Sexp.t -> t *)
-val to_sexp : Sexplib.Sexp.t list -> t -> Sexplib.Sexp.t
-val pp : t -> string
+val to_sexp : ?counter:int ref -> Sexplib.Sexp.t list -> t -> Sexplib.Sexp.t
+val pp : ?counter:int ref -> ?names:Concrete_syntax.ident list -> t -> string

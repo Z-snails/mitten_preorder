@@ -1,5 +1,5 @@
 OPAM=opam
-EXEC=${OPAM} config exec
+EXEC=${OPAM} exec
 DUNE=${EXEC} dune --
 
 .PHONY: all build clean test top
@@ -14,3 +14,6 @@ clean:
 
 doc:
 	@${DUNE} build @doc
+
+test:
+	@$(foreach file, $(wildcard test/*.tt), echo Test $(file) && ./_build/install/default/bin/mitten $(file) 1> /dev/null && echo;)

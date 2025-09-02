@@ -26,8 +26,7 @@ PATH/TO/FILE`. If there is no output, everything type checked. The commands `nor
 
 ```
 let plus : (x : {idm | Nat}) -> (y : {idm | Nat}) -> Nat @ s =
-    fun m ->
-    fun n ->
+    fun m n ->
     rec n at x -> Nat with
     | zero -> m
     | suc _, p -> suc p
@@ -48,3 +47,36 @@ normalize fib {idm, 25} at Nat @ s
 A list of other examples may be found in `test/`.
 
 The implementation is derived from [nbe-for-mltt](https://github.com/jozefg/nbe-for-mltt).
+
+# Zoe's Reading list
+
+- [x] src/lib/check.ml
+- [x] src/lib/concrete_mode_theory.ml
+- [x] src/lib/concrete_syntax.ml
+- [x] src/lib/domain.ml
+- [x] src/lib/driver.ml
+- [x] src/lib/grammar.mly
+- [x] src/lib/guarded_mode_theory.ml
+- [x] src/lib/guarded_mode_theory1.ml
+- [x] src/lib/lex.mll
+- [x] src/lib/load.ml
+- [x] src/lib/mode_theory.ml
+- [x] src/lib/nbe.ml
+- [x] src/lib/syntax.ml
+
+## Cool things
+
+- Inferring modalities in applications: f {l, x} can now usually be replaced by f x
+- Inferring lambdas if the modality is provided
+- List unsolved metavariables
+
+## Zoe's TODO list
+
+- [x] Add `force` to `src/lib/check.ml` to allow type-checking metavariables; or
+- [ ] Add a pass to replace metavariables with their solutions (this is pretty
+  tricky on account of top level definitions using de Bruijn variables)
+- [ ] Track when a metavariable m is solved in terms of another metavariable n,
+  and when n is solved, update the solution of m
+- [ ] Replace remaining uses of `add_term` with `add_var`
+- [ ] Copy examples from elab zoo
+- [ ] Add pruning (this might allow solving the motive of non-dependent eliminators)

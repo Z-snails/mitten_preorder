@@ -1,0 +1,63 @@
+; Tests taken from https://github.com/AndrasKovacs/elaboration-zoo/blob/master/03-holes/example.txt
+
+let id : (A : _) -> A -> A @ S
+    = fun A x -> x
+
+let List : U<0> -> U<0> @ S
+    = fun A -> (L : _) -> (A -> L -> L) -> L -> L
+
+let nil : (A : _) -> List A @ S
+    = fun A L cons nil -> nil
+
+let cons : (A : _) -> A -> (List A) -> List A @ S
+    = fun A x xs L cons nil -> cons x (xs L cons nil)
+
+let Bool : U<0> @ S
+    = (B : _) -> B -> B -> B
+
+let true : Bool @ S
+    = fun _ t f -> t
+
+let false : Bool @ S
+    = fun _ t f -> f
+
+let not : Bool -> Bool @ S
+    = fun b _ t f -> b _ f t
+
+let list1 : List Bool @ S
+    = cons _ (id _ true) (nil _)
+
+let Nat' : U<0> @ S
+    = (N : _) -> (N -> N) -> N -> N
+
+let zero' : Nat' @ S
+    = fun _ s z -> z
+
+let suc' : Nat' -> Nat' @ S
+    = fun n _ s z -> s (n _ s z)
+
+let five : Nat' @ S
+    = suc' (suc' (suc' (suc' (suc' zero'))))
+
+normalize def five
+
+let eqTest : Id _ five five @ S
+    = refl _
+
+let add : Nat' -> Nat' -> Nat' @ S
+    = fun n m _ s z -> n _ s (m _ s z)
+
+let add_zero_left : (x : Nat') -> Id _ x (add zero' x) @ S
+    = fun x -> refl x
+
+let add_zero_right : (x : Nat') -> Id _ x (add x zero') @ S
+    = fun x -> refl x
+
+let nrec :
+    (mot : Nat' -> U<0>) ->
+    (mot zero') ->
+    ((n : Nat') -> (mot n) -> mot (suc' n)) ->
+    (n : Nat') ->
+    mot n @ S =
+    fun _ z s n -> _
+

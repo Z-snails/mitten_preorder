@@ -26,6 +26,7 @@ type m_constr =
  *)
 (* In particular: [m1 :: m2 :: m3 ...] is parsed as m3 o m2 o m1, this turns out this way because of the binding routine*)
 
+(** A modality *)
 type m = m_constr list
 
 let equal_m mu nu =

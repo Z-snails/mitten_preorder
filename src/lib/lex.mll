@@ -48,7 +48,7 @@ let number = ['0'-'9']['0'-'9']*
 let whitespace = [' ' '\t']+
 let line_ending = '\r' | '\n' | "\r\n"
 let atom_first = ['a'-'z' 'A'-'Z' '_']
-let atom_next = ['a'-'z' 'A'-'Z' '_' '-' '*' '/' '0'-'9']
+let atom_next = ['a'-'z' 'A'-'Z' '_' '-' '*' '/' '0'-'9' '\'']
 let atom = atom_first atom_next*
 
 rule token = parse
@@ -110,6 +110,8 @@ rule token = parse
         (Grammar.ATOM input)
       end
     }
+  | '?' (atom as n)
+    { NAMED_HOLE n }
   | _
     { Printf.eprintf "Unexpected char: %s" (lexeme lexbuf); token lexbuf }
 and comment = parse
