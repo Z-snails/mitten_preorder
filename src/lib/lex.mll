@@ -100,20 +100,18 @@ rule token = parse
     { token lexbuf }
   | eof
     { EOF }
-  | atom
+  | atom as input
     {
-      let input = lexeme lexbuf in
-      begin try
-        let kwd = Hashtbl.find keywords input in
-        kwd
-      with Not_found ->
-        (Grammar.ATOM input)
-      end
+      match Hashtbl.find_opt keywords input with
+      | Some kw -> kw
+      | None -> Grammar.ATOM input
     }
   | '?' (atom as n)
     { NAMED_HOLE n }
   | _
-    { Printf.eprintf "Unexpected char: %s" (lexeme lexbuf); token lexbuf }
+    { raise (SyntaxError ("Unexpected character: " ^ lexeme lexbuf)) }
+  (* | _ *)
+  (*   { Printf.eprintf "Unexpected char: %s" (lexeme lexbuf); token lexbuf } *)
 and comment = parse
   | line_ending
     { new_line lexbuf; token lexbuf }

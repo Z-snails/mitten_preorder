@@ -83,3 +83,9 @@ The implementation is derived from [nbe-for-mltt](https://github.com/jozefg/nbe-
 - [ ] Find reference of proof that solving metavariables works (for pattern fragment)
     - [ ] Read it
 - [ ] Fix the bug in stream.tt
+
+# Log
+
+## 2025-09-02 16:52
+
+`read_back_meta` was wrong --- it incorrectly changed the size at which each term in the delayed sub was read back at. The fix was to just use the same size for each (since each term in the sub is in the same context)

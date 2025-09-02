@@ -151,8 +151,13 @@ and eval t (env : D.env) =
       | D.M _ -> false
       | D.Val _ -> true) env in
     let sp1 = eval_sub sub ~env ~size ~meta:e in
-    (* Printf.printf "While evaluating Syn.Meta. Got sub\n%s\n%!" *)
-      (* (String.concat "\n" (List.map (Domain.show _ Lazy.force) (D.untp_sub sp1))); *)
+    Printexc.get_callstack 10 |> Printexc.raw_backtrace_to_string |> print_endline;
+    Printf.printf "While evaluating meta %s. Got sub\n  %s\n\n results in\n%s\n%!"
+      (Syntax.show_metavar m)
+      (String.concat "\n  "
+        (List.map Syn.pp sub))
+      (String.concat "\n"
+        (List.map (function lazy (D.Normal { term }) -> Domain.show term) sp1));
     let sub = (D.untp_sub sp1, size - e.size) in
     match e.value with
     | Some (v, _) -> subst sub v
@@ -175,6 +180,8 @@ and eval_sub
       assert (msize = meta.size);
       []
 
+    (* A local variable --- evaluate the given term, and update the type
+       according to the substitution we have created so far *)
     | (t :: sp'), (Term { tp } :: ctx') ->
       let sem_t = lazy (eval t env) in
       (* TODO: what should the var offset be? *)
@@ -219,6 +226,7 @@ and do_elim (elim : Domain.elim) (tm : Domain.t) : Domain.t =
 and do_spine (spine : Domain.elim list) (tm : Domain.t) : Domain.t =
     List.fold_right do_elim spine tm
 
+(* is this correct? *)
 and subst_clos (sub : D.sub * int) (D.Clos { term; env }) : D.clos =
     D.Clos { term; env = subst_env sub env }
 and subst_clos2 (sub : D.sub * int) (D.Clos2 { term; env }) : D.clos2 =
@@ -235,6 +243,7 @@ and subst_env (sub : D.sub * int) (env : Domain.env) : Domain.env =
 and subst_nf (sub : D.sub * int) (Normal { tp; term } : D.nf) : D.nf =
     Normal { tp = subst sub tp; term = subst sub term }
 
+(* snd sub = new size - old size *)
 and subst (sub : D.sub * int) (t : Domain.t) : Domain.t = match t with
     | D.Lam clos -> D.Lam (subst_clos sub clos)
     | D.Neutral { tp; term } -> subst_ne sub tp term
@@ -265,6 +274,10 @@ and subst_ne (sub : D.sub * int) (tp : Domain.t) (ne : Domain.ne) : Domain.t =
     | Axiom (n, t) ->
         D.Neutral { tp = subst sub tp; term = { head = D.Axiom (n, t); spine } }
     | Meta (m, sp) ->
+        Printexc.get_callstack 10 |> Printexc.raw_backtrace_to_string |> print_endline;
+        Printf.printf "About to subst_ne %s\n%!" (Syn.show_metavar m);
+    Printf.printf "sp is\n %s\n%!" (String.concat "\n " (List.map (function lazy (D.Normal { term }) -> Domain.show term) sp));
+        (* TODO: fix this? *)
         D.Neutral
             { tp = subst sub tp
             ; term =
@@ -404,21 +417,39 @@ and read_back_head (size : int) (head : D.head) = match head with
   | D.Axiom (n, tp) -> Syn.Axiom (n, read_back_tp size tp)
 
 and read_back_meta (size : int) (meta : Syn.metavar) (sub : D.tp_sub) =
-  let rec go (size : int) (ctx : Meta.Check_env.env_entry list) (sub : D.tp_sub) =
+  let rec go (ctx : Meta.Check_env.env) (sub : D.tp_sub) =
     match ctx, sub with
     | [], [] -> []
     (* Local variables are read back normally *)
     | Term _ :: ctx', lazy t :: sub' ->
-      read_back_nf size t :: go (size + 1) ctx' sub'
-    (* Global variables can be read back directly *)
+      read_back_nf size t :: go  ctx' sub'
+    (* Global variables can be read back as the global variable itself *)
+    (* Note: this is not "correct" but it works, since global variables are
+       only in substitutions as placeholders and this is much faster *)
     | TopLevel { level } :: ctx', _ :: sub' ->
       let ix = size - (level - 1) in
-      Syn.Var ix :: go (size + 1) ctx' sub'
-    | M _ :: ctx', _ -> go size ctx' sub
+      Syn.Var ix :: go  ctx' sub'
+    | M _ :: ctx', _ -> go ctx' sub
     | _ -> failwith "Unreachable in read_back_meta"
   in
   let entry = Meta.lookup meta in
-  Syn.Meta (meta, go size (List.rev entry.context) sub)
+  Syn.Meta (meta, go (List.rev entry.context) sub)
+(* and read_back_meta (size : int) (meta : Syn.metavar) (sub : D.tp_sub) = *)
+(*   let rec go (size : int) (ctx : Meta.Check_env.env) (sub : D.tp_sub) = *)
+(*     match ctx, sub with *)
+(*     | [], [] -> [] *)
+(*     (* Local variables are read back normally *) *)
+(*     | Term _ :: ctx', lazy t :: sub' -> *)
+(*       read_back_nf size t :: go (size + 1) ctx' sub' *)
+(*     (* Global variables can be read back as the global variable itself *) *)
+(*     | TopLevel { level } :: ctx', _ :: sub' -> *)
+(*       let ix = size - (level - 1) in *)
+(*       Syn.Var ix :: go (size + 1) ctx' sub' *)
+(*     | M _ :: ctx', _ -> go size ctx' sub *)
+(*     | _ -> failwith "Unreachable in read_back_meta" *)
+(*   in *)
+(*   let entry = Meta.lookup meta in *)
+(*   Syn.Meta (meta, go size (List.rev entry.context) sub) *)
 
 and read_back_elim (size : int) (elim : D.elim) (tm : Syn.t) = match elim with
   | D.Ap (mu, x) -> Syn.Ap (mu, tm, read_back_nf size x)
@@ -614,7 +645,7 @@ and check_sub
   (m : mode) (size : int) (meta : Syn.metavar) (left : D.tp_sub) (right : D.tp_sub) =
 
   let rec go
-    (size : int) (ctx : Meta.Check_env.env_entry list)
+    (size : int) (ctx : Meta.Check_env.env)
     (left : D.tp_sub) (right : D.tp_sub) =
     match ctx, left, right with
     | [], [], [] -> true

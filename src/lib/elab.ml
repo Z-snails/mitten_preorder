@@ -322,9 +322,12 @@ let apply_pren
     with
         | Elab_error e -> Error e
 
+let show_val ~size ~tp ~term = Nbe.read_back_nf size (Normal { tp; term }) |> S.pp
+
 let solve
     ~env:(env : env) ~size ~meta:(meta : S.metavar) ~sub:(sub : Domain.nf Lazy.t list)
-    ~spine:(spine : Domain.elim list) ~rhs:(rhs : Domain.t) ~mode:(mode : mode) : unit =
+    ~spine:(spine : Domain.elim list) ~rhs:(rhs : Domain.t) ~tp:(tp : Domain.t)
+    ~mode:(mode : mode) : unit =
 
     (** Wrap an inner error with some context *)
     let err inner = While_solving { meta; sub; spine; rhs; inner } in
@@ -334,7 +337,7 @@ let solve
     in
 
     Printf.printf "Got problem %s[len = %d]... = %s\n%!"
-        (S.show_metavar meta) (List.length sub) (Domain.show rhs);
+        (S.show_metavar meta) (List.length sub) (show_val ~size ~tp ~term:rhs);
 
     (* List.iter (function lazy (D.Normal { term }) -> Printf.printf "  %s\n%!" (Domain.show term)) sub; *)
 
@@ -362,14 +365,15 @@ let solve
     let inner_sol = unwrap @@ apply_pren pren rhs meta in
     let (inner_size, inner_tp) =
         get_env entry.context entry.size spine entry.tp in
-    let inner = Nbe.read_back_nf inner_size (Normal { tp = inner_tp; term = inner_sol }) in
+    let inner =
+        Nbe.read_back_nf inner_size (Normal { tp = inner_tp; term = inner_sol }) in
 
     (* Printf.printf "  Got inner solution %s\n" (Syntax.pp inner); *)
-    (* Printf.printf "  | %s\n" (Domain.show inner_sol); *)
+    Printf.printf " %s inner_sol = %s\n" (S.show_metavar meta) (Domain.show inner_sol);
 
     (* Now add lambdas *)
     let sol = lams spine inner in
-    Printf.printf "Solved %s as %s\n" (S.show_metavar meta) (S.pp sol);
+    Printf.printf "Solved %s as %s\n%!" (S.show_metavar meta) (S.pp sol);
     let sem_sol = Nbe.eval sol (env_to_sem_env entry.context) in
     (* Printf.printf "  | %s\n" (Domain.show sem_sol); *)
     Meta.solve meta sem_sol sol
@@ -412,9 +416,9 @@ let rec unify
         else S.todo "solve meta in terms of another meta"
 
     | _, Neutral { term = { head = Meta (meta, sub); spine } }, rhs ->
-        solve ~env ~size ~meta ~sub ~spine ~rhs ~mode
+        solve ~env ~size ~meta ~sub ~spine ~rhs ~mode ~tp
     | _, rhs, Neutral { term = { head = Meta (meta, sub); spine } } ->
-        solve ~env ~size ~meta ~sub ~spine ~rhs ~mode
+        solve ~env ~size ~meta ~sub ~spine ~rhs ~mode ~tp
 
     (* Non-meta neutrals *)
     | _, Neutral x, Neutral y ->

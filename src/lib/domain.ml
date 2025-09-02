@@ -45,7 +45,7 @@ and head =
   | Axiom of string * t
     [@printer fun fmt (n, _) -> Format.fprintf fmt "%s" n]
   | Meta of S.metavar * tp_sub
-    [@printer fun fmt (m, _) -> Format.fprintf fmt "%s" (S.show_metavar m)]
+  [@printer fun fmt (m, sub) -> Format.fprintf fmt "%s" (S.show_metavar m)]
   [@@deriving show]
 and tp_sub = nf Lazy.t list
 and sub = t Lazy.t list
@@ -89,4 +89,3 @@ let rec env_val env i =
   | M _ :: lst -> env_val lst i
 
 let untp_sub = List.map (Lazy.map (function Normal { term } -> term))
-

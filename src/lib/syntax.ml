@@ -158,7 +158,9 @@ let to_sexp ?counter env t =
         ]
     | Axiom (str, _) -> Sexp.Atom str
     (* TODO: print the spine? *)
-    | Meta (Metavar (_, n), _) -> Sexp.Atom ("?" ^ n)
+    | Meta (Metavar (_, n), sub) -> Sexp.List
+      [ Sexp.Atom ("?" ^ n)
+      ; Sexp.List (List.map (go env) sub)]
   in
   go env t
 

@@ -2,8 +2,6 @@ module S = Syntax
 module D = Domain
 open Mode_theory
 
-let lo_map f = List.map (Option.map f)
-
 (* TODO: find a better place for this? *)
 module Check_env = struct
     (* The mode is the domain of the modality mu. This is needed because the implementation of modalities is ambiguous for identity modalitities.*)
@@ -102,8 +100,6 @@ let fresh_meta
 let lookup (S.Metavar (m, _)) : entry =
     MetaMap.find m !store
 
-let name_of (m : S.metavar) : string = (lookup m).name
-
 let solve (m : S.metavar) (value : Domain.t) (tm : Syntax.t) : unit =
     let e = lookup m in
     assert (Option.is_none e.value);
@@ -113,15 +109,15 @@ let all_metas () : (S.metavar * entry) list =
     List.map (function (m, e) -> (S.Metavar (m, e.name), e)) (MetaMap.bindings !store)
 
 (* This is kinda pointless anyway since metavariables can be solved by later
-   defintions so we still need force all over the place. I'll use it anyway for
-   printing terms *)
+   defintions, so we still need force all over the place. I'll use it anyway
+   for printing terms *)
 
 type sub_env =
     { root: Syntax.t list
     ; weakens: int }
 
-let weaken (e : sub_env) = { root = e.root; weakens = e.weakens + 1 }
-let weaken_n (e : sub_env) (n : int) = { root = e.root; weakens = e.weakens + n }
+let weaken_n (e : sub_env) (n : int) = { e with weakens = e.weakens + n }
+let weaken (e : sub_env) = weaken_n e 1
 
 (** Weaken a term: every free variable of tm is increased by amount *)
 let weaken_tm ~amount:(amount : int) (tm : Syntax.t) : Syntax.t =
