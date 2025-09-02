@@ -1,0 +1,13 @@
+let mod_ext :
+    (A : {l | U<0>}) -> (x : {l | A}) -> (y : {l | A}) ->
+    (Id _ (mod l x) (mod l y)) -> << l | Id _ x y >> @ T =
+    fun A x y prf -> match prf at x0 y0 _ ->
+        (letmod idm mod l(x1) <- x0 at _ -> U<0> in
+        letmod idm mod l(y1) <- y0 at _ -> U<0> in
+        << l | Id _ x1 y1 >>) with
+        | refl x0 ->
+            letmod idm mod l (x1) <- x0 at x1 ->
+                letmod idm mod l(x2) <- x1 at _ -> U<0> in
+                letmod idm mod l(x3) <- x1 at _ -> U<0> in
+                << l | Id _ x2 x3 >> in
+            mod l (refl _)

@@ -34,7 +34,7 @@ exception Type_error of error
 let tp_error e = raise (Type_error e)
 
 let assert_subtype m size t1 t2 term =
-  if Nbe.check_tp m ~subtype:true size t1 t2
+  if Nbe.check_tp m ~subtype:false size t1 t2
   then ()
   else
     (Printf.printf "About to readback %s and %s\n" (Domain.show t1) (Domain.show t2);

@@ -151,6 +151,8 @@ and eval t (env : D.env) =
       | D.M _ -> false
       | D.Val _ -> true) env in
     let sp1 = eval_sub sub ~env ~size ~meta:e in
+    (* Printf.printf "While evaluating Syn.Meta. Got sub\n%s\n%!" *)
+      (* (String.concat "\n" (List.map (Domain.show _ Lazy.force) (D.untp_sub sp1))); *)
     let sub = (D.untp_sub sp1, size - e.size) in
     match e.value with
     | Some (v, _) -> subst sub v
@@ -587,6 +589,13 @@ let rec check_nf m size nf1 nf2 =
     check_nf new_m size (D.Normal {tp = D.Uni i; term = tp}) (D.Normal {tp = D.Uni j; term = tp1})
   | D.Normal {tp = D.Uni _; term = D.Uni j},
     D.Normal {tp = D.Uni _; term = D.Uni j'} -> j = j'
+
+  | D.Normal { tp = D.Uni _; term = D.Id (tp1, x1, y1) },
+    D.Normal { tp = D.Uni _; term = D.Id (tp2, x2, y2) } ->
+    check_tp m ~subtype:false size tp1 tp2 &&
+    check_nf m size (D.Normal { tp = tp1; term = x1 }) (D.Normal { tp = tp2; term = x2 }) &&
+    check_nf m size (D.Normal { tp = tp1; term = y1 }) (D.Normal { tp = tp2; term = y2 })
+
   | D.Normal {tp = D.Uni _; term = D.Neutral {term = ne1; _}},
     D.Normal {tp = D.Uni _; term = D.Neutral {term = ne2; _}} -> check_ne m size ne1 ne2
   | D.Normal {tp = D.Neutral _; term = D.Neutral {term = ne1; _}},

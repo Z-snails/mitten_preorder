@@ -118,7 +118,9 @@ let to_sexp ?counter env t =
     | Sig (fst, snd) ->
       incr counter;
       let var = Sexp.Atom ("x" ^ string_of_int (! counter)) in
-      Sexp.List [Sexp.Atom "Sig"; go env fst; Sexp.List [var; go (var :: env) snd]]
+      Sexp.List
+        [ Sexp.Atom "Sig"; go env fst
+        ; Sexp.List [var; Sexp.Atom "->"; go (var :: env) snd] ]
     | Pair (t1, t2) ->
       Sexp.List [Sexp.Atom "pair"; go env t1; go env t2]
     | Fst t -> Sexp.List [Sexp.Atom "fst"; go env t]
