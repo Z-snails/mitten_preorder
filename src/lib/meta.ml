@@ -153,7 +153,16 @@ let weaken_tm ~amount:(amount : int) (tm : Syntax.t) : Syntax.t =
 let find (e : sub_env) (v : int) : Syntax.t =
     if v < e.weakens
     then Syntax.Var v (* A local variable *)
-    else weaken_tm ~amount:e.weakens (List.nth e.root (v - e.weakens))
+    (* else weaken_tm ~amount:e.weakens (List.nth e.root (v - e.weakens)) *)
+    else
+        let new_v = v - e.weakens in
+    try
+    weaken_tm ~amount:e.weakens (List.nth e.root new_v)
+        with
+            | err ->
+            Printf.printf "Failure: v = %d, new_v = %d, length root = %d, weakens = %d\n%!" v new_v (List.length e.root) e.weakens;
+            Printf.printf "%s\n%!" (String.concat "\n" (List.map Syntax.pp e.root));
+            raise err
         (* let new_v = v - e.weakens in *)
         (* (* S.todo "find" *) *)
         (* match List.nth e.root (v - e.weakens) with *)
@@ -192,21 +201,25 @@ let remove_solved (env : env) (t : Syntax.t) : Syntax.t =
                 , go (weaken env) body, go env tm)
         | S.Axiom (n, tp) -> S.Axiom (n, go env tp)
         | S.Meta (m, sub) ->
-            let sub' = List.map (go env) sub in
+            Printf.printf "remove_solved/Meta %s\n%!" (S.show_metavar m);
+            Printf.printf "%s\n%!" (String.concat "\n" (List.map Syntax.pp sub));
+            ignore @@ List.map (fun t ->
+                try go env t with e -> Printf.printf "  failed in term %s\n%!" (S.pp t); raise e) sub;
             let entry = lookup m in
-            match entry.value with
-                | Some (_, v) -> go env (subst sub' v)
-                | None -> S.Meta (m, sub')
+            let res = match entry.value with
+                | Some (_, v) -> go env (subst sub v)
+                | None -> S.Meta (m, List.map (go env) sub)
+            in
+            Printf.printf "  remove_soved %s solved to\n%s\n%!" (S.show_metavar m) (S.pp res);
+            res
 
     and subst (sub : Syntax.t list) (t : Syntax.t) : Syntax.t =
         go { root = List.rev sub; weakens = 0 } t
 
     in
-    (* let root = List.mapi (fun i e -> *)
-    (*     match e with *)
-    (*     | TopLevel _ | Term { defined = true } -> None *)
-    (*     | Term { defined = false } -> Some (S.Var i) *)
-    (*         | _ -> failwith "Unreachable" *)
-    (*     ) env in *)
-    let root = List.mapi (fun i _ -> S.Var i) env in
+    let root =
+        List.mapi (fun i _ -> S.Var i)
+            (List.filter (function
+                | Term _ | TopLevel _ -> true
+                | M _ -> false) env) in
     go { root; weakens = 0 } t

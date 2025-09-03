@@ -197,10 +197,8 @@ let invert
         | t' -> Error (Not_renaming (Left t'))
     in
 
-    let lvl_to_ix lvl = size - (lvl + 1) in
-
     let get_prob_mod (lvl : int) =
-        match nth_tm prob_env (lvl_to_ix lvl) with
+        match nth_tm prob_env (D.lvl_to_ix ~size ~lvl) with
         | Term { mu; defined = false } -> Ok mu
         | TopLevel { tp } | Term { tp; defined = true } ->
             Error (Not_renaming (Left (D.mk_var tp lvl)))
@@ -223,7 +221,7 @@ let invert
     in
 
     let rec go_sub
-        (env : env) (sub : Domain.nf Lazy.t list) (size : int)
+        (env : env) (sub : D.tp_sub) (size : int)
         (acc : pren): (pren, elab_error) result =
         match env, sub with
         | [], [] -> go_spine (List.rev spine) size acc
@@ -238,7 +236,7 @@ let invert
                 assert_res (MT.eq_mod prob_mod meta_mod)
                     (Not_identity_2cell
                         { in_problem = prob_mod; in_meta = meta_mod; variable = v }) in
-            let* _ = assert_res (not @@ IntMap.mem v acc) (Non_linear (v)) in
+            let* _ = assert_res (not @@ IntMap.mem v acc) (Non_linear v) in
             go_sub env' sub' (size + 1) (IntMap.add v size acc)
         | _ -> failwith "Unreachable"
     in
@@ -324,6 +322,28 @@ let apply_pren
 
 let show_val ~size ~tp ~term = Nbe.read_back_nf size (Normal { tp; term }) |> S.pp
 
+let rec read_back_sub ~size:(size : int) (meta : S.metavar) (sub : D.tp_sub) =
+    let Metavar (_, n) = meta in let debug = n = "cons1" in
+
+    let rec go (ctx : Meta.Check_env.env) (sub : D.tp_sub) =
+    match ctx, sub with
+    | [], [] -> []
+    (* Local variables are read back normally *)
+    | Term _ :: ctx', lazy t :: sub' ->
+      Nbe.read_back_nf size t :: go  ctx' sub'
+    (* Global variables can be read back as the global variable itself *)
+    (* Note: this is not "correct" but it works, since global variables are
+       only in substitutions as placeholders and this is much faster *)
+    | TopLevel { name; level } :: ctx', _ :: sub' ->
+      let ix = D.lvl_to_ix ~size ~lvl:level in
+            if debug then Printf.printf "read_back top level name = %s, level = %d, ix = %d; size = %d\n%!" name level ix size;
+      S.Var ix :: go  ctx' sub'
+    | M _ :: ctx', _ -> go ctx' sub
+    | _ -> failwith "Unreachable in read_back_meta"
+    in
+    go (List.rev (Meta.lookup meta).context) sub
+
+
 let solve
     ~env:(env : env) ~size ~meta:(meta : S.metavar) ~sub:(sub : Domain.nf Lazy.t list)
     ~spine:(spine : Domain.elim list) ~rhs:(rhs : Domain.t) ~tp:(tp : Domain.t)
@@ -336,10 +356,11 @@ let solve
         | Error e -> elab_error (err e)
     in
 
-    Printf.printf "Got problem %s[len = %d]... = %s\n%!"
-        (S.show_metavar meta) (List.length sub) (show_val ~size ~tp ~term:rhs);
+    Printf.printf "Got problem %s[%s]...(len = %d) =\n%s\n\n%!"
+        (S.show_metavar meta) (String.concat ", " (List.map S.pp (read_back_sub ~size meta sub))) (List.length spine) (show_val ~size ~tp ~term:rhs);
 
-    (* List.iter (function lazy (D.Normal { term }) -> Printf.printf "  %s\n%!" (Domain.show term)) sub; *)
+    List.iter (function lazy (D.Normal { term }) -> Printf.printf "%s\n%!" (Domain.show term)) sub;
+    Printf.printf "\n%!";
 
     let rec lams (spine : Domain.elim list) (term : Syntax.t) =
         match spine with
@@ -368,12 +389,12 @@ let solve
     let inner =
         Nbe.read_back_nf inner_size (Normal { tp = inner_tp; term = inner_sol }) in
 
-    (* Printf.printf "  Got inner solution %s\n" (Syntax.pp inner); *)
+    Printf.printf "  Got inner solution %s\n" (Syntax.pp inner);
     Printf.printf " %s inner_sol = %s\n" (S.show_metavar meta) (Domain.show inner_sol);
 
     (* Now add lambdas *)
     let sol = lams spine inner in
-    Printf.printf "Solved %s as %s\n%!" (S.show_metavar meta) (S.pp sol);
+    Printf.printf "Solved %s as %s\n\n%!" (S.show_metavar meta) (S.pp sol);
     let sem_sol = Nbe.eval sol (env_to_sem_env entry.context) in
     (* Printf.printf "  | %s\n" (Domain.show sem_sol); *)
     Meta.solve meta sem_sol sol

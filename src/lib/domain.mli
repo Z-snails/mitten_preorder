@@ -67,3 +67,5 @@ val axiom : string -> t -> ne
 val meta : Syntax.metavar -> tp_sub -> ne
 
 val untp_sub : tp_sub -> sub
+
+val lvl_to_ix : size:int -> lvl:int -> int

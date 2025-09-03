@@ -274,9 +274,9 @@ and subst_ne (sub : D.sub * int) (tp : Domain.t) (ne : Domain.ne) : Domain.t =
     | Axiom (n, t) ->
         D.Neutral { tp = subst sub tp; term = { head = D.Axiom (n, t); spine } }
     | Meta (m, sp) ->
-        Printexc.get_callstack 10 |> Printexc.raw_backtrace_to_string |> print_endline;
-        Printf.printf "About to subst_ne %s\n%!" (Syn.show_metavar m);
-    Printf.printf "sp is\n %s\n%!" (String.concat "\n " (List.map (function lazy (D.Normal { term }) -> Domain.show term) sp));
+    (*     Printexc.get_callstack 10 |> Printexc.raw_backtrace_to_string |> print_endline; *)
+    (*     Printf.printf "About to subst_ne %s\n%!" (Syn.show_metavar m); *)
+    (* Printf.printf "sp is\n %s\n%!" (String.concat "\n " (List.map (function lazy (D.Normal { term }) -> Domain.show term) sp)); *)
         (* TODO: fix this? *)
         D.Neutral
             { tp = subst sub tp
@@ -412,7 +412,7 @@ and read_back_tp size d =
   | _ -> raise (Nbe_failed "Not a type in read_back_tp")
 
 and read_back_head (size : int) (head : D.head) = match head with
-  | D.Var x -> Syn.Var (size - (x + 1))
+  | D.Var lvl -> Syn.Var (D.lvl_to_ix ~size ~lvl)
   | D.Meta (m, sub) -> read_back_meta size m sub
   | D.Axiom (n, tp) -> Syn.Axiom (n, read_back_tp size tp)
 
@@ -427,7 +427,7 @@ and read_back_meta (size : int) (meta : Syn.metavar) (sub : D.tp_sub) =
     (* Note: this is not "correct" but it works, since global variables are
        only in substitutions as placeholders and this is much faster *)
     | TopLevel { level } :: ctx', _ :: sub' ->
-      let ix = size - (level - 1) in
+      let ix = D.lvl_to_ix ~size ~lvl:level in
       Syn.Var ix :: go  ctx' sub'
     | M _ :: ctx', _ -> go ctx' sub
     | _ -> failwith "Unreachable in read_back_meta"

@@ -130,7 +130,9 @@ let process_decl (Env { size; check_env; bindings })  = function
     let def2 = Elab.while_elaborating name
       (fun _ -> Elab.check ~size ~env:check_env ~tp:sem_tp ~term:def ~mode:bind_md) in
     (* Printf.printf "  got def2\n%!"; *)
-    let def3 = Meta.remove_solved check_env def2 in
+    let def3 = try Meta.remove_solved check_env def2
+  with
+      | e -> Printf.printf "While removing solved metas from %s\n%!" (Syntax.pp def2); raise e in
     (* Printf.printf "  got def3\n%!"; *)
     Check.check ~size ~env:check_env ~term:def3 ~tp:sem_tp ~m:bind_md;
     let sem_def = Nbe.eval def3 sem_env in
