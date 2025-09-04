@@ -5,6 +5,18 @@ open Mode_theory
 
 exception Nbe_failed of string
 
+let create_env (meta : Syn.metavar) (sub : D.sub) =
+  let rec go (ctx : Meta.Check_env.env) (sub : D.sub) =
+    match ctx, sub with
+    | [], [] -> []
+    | TopLevel { term } :: ctx', _ :: sub' -> D.Val term :: go ctx' sub'
+    | Term _ :: ctx', lazy t :: sub' ->
+      D.Val t :: go ctx' sub'
+    | M mu :: ctx', sub' -> D.M mu :: go ctx' sub'
+    | _ -> failwith "Unreachable"
+  in
+  go (Meta.lookup meta).context (List.rev sub)
+
 (* clos_mod is completly unused *)
 let rec clos_mod (D.Clos {term; env}) mu = D.Clos {term = term; env = D.M mu :: env}
 
@@ -150,41 +162,40 @@ and eval t (env : D.env) =
     let size = List.length @@ List.filter (function
       | D.M _ -> false
       | D.Val _ -> true) env in
-    let sp1 = eval_sub sub ~env ~size ~meta:e in
-    Printexc.get_callstack 10 |> Printexc.raw_backtrace_to_string |> print_endline;
-    Printf.printf "While evaluating meta %s. Got sub\n  %s\n\n results in\n%s\n%!"
-      (Syntax.show_metavar m)
-      (String.concat "\n  "
-        (List.map Syn.pp sub))
-      (String.concat "\n"
-        (List.map (function lazy (D.Normal { term }) -> Domain.show term) sp1));
-    let sub = (D.untp_sub sp1, size - e.size) in
+    (* Printexc.get_callstack 10 |> Printexc.raw_backtrace_to_string |> print_endline; *)
+    (* Printf.printf "While evaluating meta %s. Got sub\n  %s\n\n results in\n%s\n%!" *)
+    (*   (Syntax.show_metavar m) *)
+    (*   (String.concat "\n  " *)
+    (*     (List.map Syn.pp sub)) *)
+    (*   (String.concat "\n" *)
+    (*     (List.map (function lazy (D.Normal { term }) -> Domain.show term) sp1)); *)
     match e.value with
-    | Some (v, _) -> subst sub v
-    | None -> D.Neutral
-      { tp = subst sub e.tp
-      ; term = D.meta m sp1 }
+    | Some (_, v) -> eval v (create_env m (eval_sub ~env sub))
+    | None ->
+      let tp_sub = eval_tp_sub sub ~env ~size ~meta:m in
+      D.Neutral
+        { tp = eval e.tp (create_env m (D.untp_sub tp_sub))
+        ; term = D.meta m tp_sub }
 
 (* sp is a cons list, ctx is a snoc list, so we need to reverse ctx first *)
 (* TODO: think about size: when subst-ing the types, each entry in context is
    at a different size *)
-and eval_sub
-  ~env:(env : D.env) ~size:(size : int) ~(meta : Meta.entry)
+and eval_tp_sub
+  ~env:(env : D.env) ~size:(size : int) ~meta:(meta : Syn.metavar)
   (sp : Syntax.t list) : D.tp_sub =
 
-  (* let var_off = size - meta.size in *)
+  let entry = Meta.lookup meta in
 
   let rec go sp (ctx : Meta.Check_env.env) (sub : D.t Lazy.t list) (msize : int) =
     match sp, ctx with
     | [], [] ->
-      assert (msize = meta.size);
+      assert (msize = entry.size);
       []
 
     (* A local variable --- evaluate the given term, and update the type
        according to the substitution we have created so far *)
     | (t :: sp'), (Term { tp } :: ctx') ->
       let sem_t = lazy (eval t env) in
-      (* TODO: what should the var offset be? *)
       lazy (D.Normal { tp = subst (sub, size - msize) tp; term = Lazy.force sem_t })
         :: go sp' ctx' (List.append sub [sem_t]) (msize + 1)
 
@@ -200,19 +211,11 @@ and eval_sub
     | _ -> failwith
       "The length of the spine and number of variables in the context don't match"
   in
+  go sp (List.rev entry.context) [] 0
 
-  (* Printf.printf "sp has len %d, ctx has len %d\n%!" (List.length sp) (List.length meta.context); *)
 
-  (* Printf.printf "eval_sub: sp = %s\n%!" (String.concat ", " (List.map Syntax.pp sp)); *)
-  (* Printf.printf " env has length %d\n%!" (List.length env); *)
-  (* List.iter (function | D.Val t -> Printf.printf " %s\n%!" (D.show t) | _ -> ()) env; *)
-
-  let x = go sp (List.rev meta.context) [] 0 in
-
-  (* Printf.printf " result = \n%!"; *)
-  (* List.iter (function lazy (D.Normal { term }) -> Printf.printf " %s\n%!" (Domain.show term)) x; *)
-
-  x
+and eval_sub ~env:(env : D.env) (sp : Syntax.t list) : D.sub =
+  List.map (fun t -> lazy (eval t env)) sp
 
 and do_elim (elim : Domain.elim) (tm : Domain.t) : Domain.t =
     match elim, tm with
@@ -244,6 +247,8 @@ and subst_nf (sub : D.sub * int) (Normal { tp; term } : D.nf) : D.nf =
     Normal { tp = subst sub tp; term = subst sub term }
 
 (* snd sub = new size - old size *)
+(* TODO: replace this with read_back |> eval? *)
+(* TODO: elab-zoo has Domain.t -> Syntax.t *)
 and subst (sub : D.sub * int) (t : Domain.t) : Domain.t = match t with
     | D.Lam clos -> D.Lam (subst_clos sub clos)
     | D.Neutral { tp; term } -> subst_ne sub tp term
@@ -299,12 +304,15 @@ let rec force (size : int) (t : Domain.t) : Domain.t =
   Neutral { tp; term = { head = Meta (m, sub); spine } as term } ->
     begin
       let entry = Meta.lookup m in
-      let off = size - entry.size in
       match entry.value with
       | None -> Neutral { tp = force size tp; term }
-      | Some v ->
-        let v' = subst (D.untp_sub sub, off) (fst v) in
-        force size (do_spine spine v')
+      (* force using eval? *)
+      (* | Some (v, _) -> *)
+      (*   let v' = subst (D.untp_sub sub, off) v in *)
+      (*   force size (do_spine spine v') *)
+      | Some (_, v) ->
+        let env = create_env m (D.untp_sub sub) in
+        force size (eval v env)
     end
   | _ -> t
 
@@ -413,43 +421,26 @@ and read_back_tp size d =
 
 and read_back_head (size : int) (head : D.head) = match head with
   | D.Var lvl -> Syn.Var (D.lvl_to_ix ~size ~lvl)
-  | D.Meta (m, sub) -> read_back_meta size m sub
+  | D.Meta (m, sub) -> Syn.Meta (m, read_back_sub ~size m sub)
   | D.Axiom (n, tp) -> Syn.Axiom (n, read_back_tp size tp)
 
-and read_back_meta (size : int) (meta : Syn.metavar) (sub : D.tp_sub) =
-  let rec go (ctx : Meta.Check_env.env) (sub : D.tp_sub) =
+and read_back_sub ~size:(size : int) (meta : Syn.metavar) (sub : D.tp_sub) =
+    let rec go (ctx : Meta.Check_env.env) (sub : D.tp_sub) =
     match ctx, sub with
     | [], [] -> []
     (* Local variables are read back normally *)
     | Term _ :: ctx', lazy t :: sub' ->
       read_back_nf size t :: go  ctx' sub'
-    (* Global variables can be read back as the global variable itself *)
-    (* Note: this is not "correct" but it works, since global variables are
-       only in substitutions as placeholders and this is much faster *)
-    | TopLevel { level } :: ctx', _ :: sub' ->
-      let ix = D.lvl_to_ix ~size ~lvl:level in
-      Syn.Var ix :: go  ctx' sub'
+    (* Global variables can be read back as the global variable itself. Note:
+       this is not correct, but it works since global variables are only in
+       substitutions as placeholders and this is much faster. This also results
+       in nicer printing of delayed substitutions *)
+    | TopLevel { name; level } :: ctx', _ :: sub' ->
+      Syn.Var (D.lvl_to_ix ~size ~lvl:level) :: go  ctx' sub'
     | M _ :: ctx', _ -> go ctx' sub
     | _ -> failwith "Unreachable in read_back_meta"
-  in
-  let entry = Meta.lookup meta in
-  Syn.Meta (meta, go (List.rev entry.context) sub)
-(* and read_back_meta (size : int) (meta : Syn.metavar) (sub : D.tp_sub) = *)
-(*   let rec go (size : int) (ctx : Meta.Check_env.env) (sub : D.tp_sub) = *)
-(*     match ctx, sub with *)
-(*     | [], [] -> [] *)
-(*     (* Local variables are read back normally *) *)
-(*     | Term _ :: ctx', lazy t :: sub' -> *)
-(*       read_back_nf size t :: go (size + 1) ctx' sub' *)
-(*     (* Global variables can be read back as the global variable itself *) *)
-(*     | TopLevel { level } :: ctx', _ :: sub' -> *)
-(*       let ix = size - (level - 1) in *)
-(*       Syn.Var ix :: go (size + 1) ctx' sub' *)
-(*     | M _ :: ctx', _ -> go size ctx' sub *)
-(*     | _ -> failwith "Unreachable in read_back_meta" *)
-(*   in *)
-(*   let entry = Meta.lookup meta in *)
-(*   Syn.Meta (meta, go size (List.rev entry.context) sub) *)
+    in
+    go (List.rev (Meta.lookup meta).context) sub
 
 and read_back_elim (size : int) (elim : D.elim) (tm : Syn.t) = match elim with
   | D.Ap (mu, x) -> Syn.Ap (mu, tm, read_back_nf size x)
@@ -467,7 +458,8 @@ and read_back_elim (size : int) (elim : D.elim) (tm : Syn.t) = match elim with
 
     let suc_var = D.mk_var applied_tp (size + 1) in
     let applied_suc = do_clos2 suc tp_var suc_var in
-    let suc' = read_back_nf (size + 2) (D.Normal { tp = applied_suc_tp; term = applied_suc }) in
+    let suc' =
+      read_back_nf (size + 2) (D.Normal { tp = applied_suc_tp; term = applied_suc }) in
 
     Syn.NRec
       (tp'
@@ -510,46 +502,6 @@ and read_back_spine (size : int) (spine : D.elim list) (tm : Syn.t) =
 
 and read_back_ne size ne =
   read_back_spine size (ne.spine) (read_back_head size ne.head)
-  (* match ne with *)
-  (* | D.Var x -> Syn.Var (size - (x + 1)) *)
-  (* | D.Ap (mu, ne, arg) -> Syn.Ap (mu, read_back_ne size ne, read_back_nf size arg) *)
-  (* | D.NRec (tp, zero, suc, n) -> *)
-  (*   let tp_var = D.mk_var D.Nat size in *)
-  (*   let applied_tp = do_clos tp tp_var in *)
-  (*   let zero_tp = do_clos tp D.Zero in *)
-  (*   let applied_suc_tp = do_clos tp (D.Suc tp_var) in *)
-  (*   let tp' = read_back_tp (size + 1) applied_tp in *)
-  (*   let suc_var = D.mk_var applied_tp (size + 1) in *)
-  (*   let applied_suc = do_clos2 suc tp_var suc_var in *)
-  (*   let suc' = *)
-  (*     read_back_nf (size + 2) (D.Normal {tp = applied_suc_tp; term = applied_suc}) in *)
-  (*   Syn.NRec *)
-  (*     (tp', *)
-  (*      read_back_nf size (D.Normal {tp = zero_tp; term = zero}), *)
-  (*      suc', *)
-  (*      read_back_ne size n) *)
-  (* | D.Fst ne -> Syn.Fst (read_back_ne size ne) *)
-  (* | D.Snd ne -> Syn.Snd (read_back_ne size ne) *)
-
-  (* | D.Letmod (mu, nu, tyfam, clos, argtp, ne) -> *)
-  (*   let tp = do_clos tyfam (D.Tymod (mu, D.mk_var argtp size)) in *)
-  (*   let tm = D.Normal {tp = tp; term = do_clos clos (D.mk_var argtp size)} in *)
-  (*   Syn.Letmod (mu, nu, read_back_tp (size + 1) tp, read_back_nf (size + 1) tm, read_back_ne size ne) *)
-
-  (* | D.J (mot, refl, tp, _, _, eq) -> *)
-  (*   let mot_var1 = D.mk_var tp size in *)
-  (*   let mot_var2 = D.mk_var tp (size + 1) in *)
-  (*   let mot_var3 = D.mk_var (D.Id (tp, mot_var1, mot_var2)) (size + 2) in *)
-  (*   let mot_syn = read_back_tp (size + 3) (do_clos3 mot mot_var1 mot_var2 mot_var3) in *)
-  (*   let refl_var = D.mk_var tp size in *)
-  (*   let refl_syn = *)
-  (*     read_back_nf *)
-  (*       (size + 1) *)
-  (*       (D.Normal {term = do_clos refl refl_var; tp = do_clos3 mot refl_var refl_var (D.Refl refl_var)}) in *)
-  (*   let eq_syn = read_back_ne size eq in *)
-  (*   Syn.J (mot_syn, refl_syn, eq_syn) *)
-  (* | D.Axiom (str, tp) -> Syn.Axiom (str, read_back_tp size tp) *)
-
 
 (* Check two normal forms are (definitionally) equal *)
 let rec check_nf m size nf1 nf2 =
@@ -666,7 +618,6 @@ and check_elim (m : mode) (size : int) (e1 : D.elim) (e2 : D.elim) =
   | Ap (mu1, x), Ap (mu2, y) ->
     (* The modalities should be the same, but check anyway *)
     assert (eq_mod mu1 mu2);
-    (* TODO: This used to be check_nf m size x1 x2, but I think it should be this *)
     check_nf (dom_mod mu1 m) size x y
 
   | Fst, Fst -> true
@@ -717,60 +668,6 @@ and check_ne (m : mode) (size : int) (x : D.ne) (y : D.ne) =
 and check (m : mode) (size : int) ~tp:(tp : Domain.t) (x : Domain.t) (y : Domain.t) =
   check_nf m size (Normal { tp; term = x }) (Normal { tp; term = y })
 
-(* Check two neutral values are (definitionally) equal *)
-(* and check_ne m size ne1 ne2 = *)
-(*   match ne1, ne2 with *)
-(*   | D.Var x, D.Var y -> x = y *)
-(*   | D.Ap (_, ne1, arg1), D.Ap (_, ne2, arg2) -> *)
-(*     check_ne m size ne1 ne2 && check_nf m size arg1 arg2 *)
-
-(*   | D.NRec (tp1, zero1, suc1, n1), D.NRec (tp2, zero2, suc2, n2) -> *)
-(*     let tp_var = D.mk_var D.Nat size in *)
-(*     let applied_tp1, applied_tp2 = do_clos tp1 tp_var, do_clos tp2 tp_var in *)
-(*     let zero_tp = do_clos tp1 D.Zero in *)
-(*     let applied_suc_tp = do_clos tp1 (D.Suc tp_var) in *)
-(*     let suc_var1 = D.mk_var applied_tp1 (size + 1) in *)
-(*     let suc_var2 = D.mk_var applied_tp2 (size + 1) in *)
-(*     let applied_suc1 = do_clos2 suc1 tp_var suc_var1 in *)
-(*     let applied_suc2 = do_clos2 suc2 tp_var suc_var2 in *)
-(*     check_tp m ~subtype:false (size + 1) applied_tp1 applied_tp2 *)
-(*     && check_nf m size (D.Normal {tp = zero_tp; term = zero1}) (D.Normal {tp = zero_tp; term = zero2}) *)
-(*     && check_nf m (size + 2) (D.Normal {tp = applied_suc_tp; term = applied_suc1}) *)
-(*       (D.Normal {tp = applied_suc_tp; term = applied_suc2}) *)
-(*     && check_ne m size n1 n2 *)
-
-(*   | D.Fst ne1, D.Fst ne2  -> check_ne m size ne1 ne2 *)
-(*   | D.Snd ne1, D.Snd ne2 -> check_ne m size ne1 ne2 *)
-(*   | D.Letmod (mu, nu, tyclos, clos, argty, ne), *)
-(*     D.Letmod (mu1, nu1, tyclos1, clos1, _, ne1) -> *)
-(*     let arg = D.mk_var argty size in *)
-(*     let applied_ty = do_clos tyclos (D.Mod (mu, arg)) in *)
-(*     let applied_ty1 = do_clos tyclos1 (D.Mod (mu, arg)) in *)
-(*     let applied_tm = do_clos clos arg in *)
-(*     let applied_tm1 = do_clos clos1 arg in *)
-(*     eq_mod mu mu1 && eq_mod nu nu1 && *)
-(*     check_nf m (size + 1) (D.Normal {tp = applied_ty; term = applied_tm}) (D.Normal {tp = applied_ty1; term = applied_tm1}) *)
-(*     && let new_m = dom_mod mu m in *)
-(*     check_ne new_m size ne ne1 *)
-(*   | D.J (mot1, refl1, tp1, left1, right1, eq1), *)
-(*     D.J (mot2, refl2, tp2, left2, right2, eq2) -> *)
-(*     check_tp m ~subtype:false size tp1 tp2 && *)
-(*     check_nf m size (D.Normal {tp = tp1; term = left1}) (D.Normal {tp = tp2; term = left2}) && *)
-(*     check_nf m size (D.Normal {tp = tp1; term = right1}) (D.Normal {tp = tp2; term = right2}) && *)
-(*     let mot_var1 = D.mk_var tp1 size in *)
-(*     let mot_var2 = D.mk_var tp1 (size + 1) in *)
-(*     let mot_var3 = D.mk_var (D.Id (tp1, left1, right1)) (size + 2) in *)
-(*     check_tp m ~subtype:false (size + 3) (do_clos3 mot1 mot_var1 mot_var2 mot_var3) (do_clos3 mot2 mot_var1 mot_var2 mot_var3) && *)
-(*     let refl_var = D.mk_var tp1 size in *)
-(*     check_nf *)
-(*       m *)
-(*       (size + 1) *)
-(*       (D.Normal {term = do_clos refl1 refl_var; tp = do_clos3 mot1 refl_var refl_var (D.Refl refl_var)}) *)
-(*       (D.Normal {term = do_clos refl2 refl_var; tp = do_clos3 mot2 refl_var refl_var (D.Refl refl_var)}) && *)
-(*     check_ne m size eq1 eq2 *)
-(*   | D.Axiom (str1, _), D.Axiom (str2, _) -> String.equal str1 str2 *)
-(*   | _ -> false *)
-
 (* Check two types are equal *)
 and check_tp m ~subtype size d1 d2 =
   match force size d1, force size d2 with
@@ -796,8 +693,12 @@ and check_tp m ~subtype size d1 d2 =
     eq_mod mu nu && check_tp new_m ~subtype size tp tp1
   | _ -> false
 
-(* To normalize an arbitrary term G |- M : A we need to reflect the context G in an initial environment. We include this for completeness, though the function "normalize" is in fact not used. For equality checking we use the more efficient "check_nf" resp. "check_np" functions.
- * Furthermore, toplevel definitions are handled a bit differently (see proc_decl in the driver.ml)
+(* To normalize an arbitrary term G |- M : A we need to reflect the context G
+   in an initial environment. We include this for completeness, though the
+   function "normalize" is in fact not used. For equality checking we use the
+   more efficient "check_nf" resp. "check_np" functions.
+ * Furthermore, toplevel definitions are handled a bit differently (see
+   proc_decl in the driver.ml)
  * Otherwise, the type checker doesn't let the user specify open terms. *)
 let rec initial_env env =
   match env with

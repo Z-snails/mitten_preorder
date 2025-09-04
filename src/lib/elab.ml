@@ -73,7 +73,7 @@ type elab_error =
 
     (* Metavariable solving *)
     | While_solving of
-        { meta: S.metavar; sub: Domain.nf Lazy.t list
+        { meta: S.metavar; sub: Domain.nf Lazy.t list; tp: Domain.t
         ; spine: Domain.elim list; rhs: Domain.t; inner: elab_error }
     | Not_renaming of (Domain.t, Domain.elim) Either.t
     | Not_identity_2cell of { in_problem: modality; in_meta: modality; variable: int }
@@ -110,12 +110,11 @@ let rec pp_error (e : elab_error) = match e with
             (show_preterm e.term) (pp_error e.inner)
 
     | While_solving e ->
-        Printf.sprintf "While solving metavariable %s[\n%s\n]... = %s\n\n%s"
-            (S.show_metavar e.meta)
-            (* TODO: show delayed sub nicely *)
-            (* (List.length e.sub) *)
-            (String.concat "\n"
-                (List.map (function lazy (D.Normal { term }) -> Domain.show term) e.sub))
+        (* TODO: read_back before printing *)
+        Printf.sprintf "While solving metavariable %s = %s\n\n%s"
+            (Domain.show (Neutral
+                { tp = e.tp
+                ; term = { head = D.Meta (e.meta, e.sub); spine = e.spine }}))
             (Domain.show e.rhs) (pp_error e.inner)
     | Not_renaming e ->
         let tm = match e with
@@ -249,6 +248,7 @@ let invert
     go_sub (List.rev meta_env) sub 0 IntMap.empty
 
 (** Apply a partial renaming to a term, also checking for occurances of a given metavariable  *)
+(* TODO: replace this with read_back |> eval? *)
 let apply_pren
     (pren : int IntMap.t) (term : Domain.t)
     (meta : S.metavar) : (Domain.t, elab_error) result =
@@ -322,45 +322,25 @@ let apply_pren
 
 let show_val ~size ~tp ~term = Nbe.read_back_nf size (Normal { tp; term }) |> S.pp
 
-let rec read_back_sub ~size:(size : int) (meta : S.metavar) (sub : D.tp_sub) =
-    let Metavar (_, n) = meta in let debug = n = "cons1" in
-
-    let rec go (ctx : Meta.Check_env.env) (sub : D.tp_sub) =
-    match ctx, sub with
-    | [], [] -> []
-    (* Local variables are read back normally *)
-    | Term _ :: ctx', lazy t :: sub' ->
-      Nbe.read_back_nf size t :: go  ctx' sub'
-    (* Global variables can be read back as the global variable itself *)
-    (* Note: this is not "correct" but it works, since global variables are
-       only in substitutions as placeholders and this is much faster *)
-    | TopLevel { name; level } :: ctx', _ :: sub' ->
-      let ix = D.lvl_to_ix ~size ~lvl:level in
-            if debug then Printf.printf "read_back top level name = %s, level = %d, ix = %d; size = %d\n%!" name level ix size;
-      S.Var ix :: go  ctx' sub'
-    | M _ :: ctx', _ -> go ctx' sub
-    | _ -> failwith "Unreachable in read_back_meta"
-    in
-    go (List.rev (Meta.lookup meta).context) sub
-
-
 let solve
     ~env:(env : env) ~size ~meta:(meta : S.metavar) ~sub:(sub : Domain.nf Lazy.t list)
     ~spine:(spine : Domain.elim list) ~rhs:(rhs : Domain.t) ~tp:(tp : Domain.t)
     ~mode:(mode : mode) : unit =
 
     (** Wrap an inner error with some context *)
-    let err inner = While_solving { meta; sub; spine; rhs; inner } in
+    let err inner = While_solving { meta; sub; spine; rhs; inner; tp } in
     let unwrap : type a. (a, elab_error) result -> a = function
         | Ok x -> x
         | Error e -> elab_error (err e)
     in
 
-    Printf.printf "Got problem %s[%s]...(len = %d) =\n%s\n\n%!"
-        (S.show_metavar meta) (String.concat ", " (List.map S.pp (read_back_sub ~size meta sub))) (List.length spine) (show_val ~size ~tp ~term:rhs);
+    Printf.printf "Got unification problem\n%s\n=\n%s\n\n%!"
+        (show_val ~size ~tp
+            ~term:(D.Neutral { tp; term = { head = D.Meta (meta, sub); spine } }))
+        (show_val ~size ~tp ~term:rhs);
 
-    List.iter (function lazy (D.Normal { term }) -> Printf.printf "%s\n%!" (Domain.show term)) sub;
-    Printf.printf "\n%!";
+    (* List.iter (function lazy (D.Normal { term }) -> Printf.printf "%s\n%!" (Domain.show term)) sub; *)
+    (* Printf.printf "\n%!"; *)
 
     let rec lams (spine : Domain.elim list) (term : Syntax.t) =
         match spine with
@@ -385,12 +365,12 @@ let solve
     (* The solution without lambdas applied *)
     let inner_sol = unwrap @@ apply_pren pren rhs meta in
     let (inner_size, inner_tp) =
-        get_env entry.context entry.size spine entry.tp in
+        get_env entry.context entry.size spine entry.sem_tp in
     let inner =
         Nbe.read_back_nf inner_size (Normal { tp = inner_tp; term = inner_sol }) in
 
-    Printf.printf "  Got inner solution %s\n" (Syntax.pp inner);
-    Printf.printf " %s inner_sol = %s\n" (S.show_metavar meta) (Domain.show inner_sol);
+    (* Printf.printf "  Got inner solution %s\n" (Syntax.pp inner); *)
+    (* Printf.printf " %s inner_sol = %s\n" (S.show_metavar meta) (Domain.show inner_sol); *)
 
     (* Now add lambdas *)
     let sol = lams spine inner in
@@ -624,7 +604,8 @@ and check ~env:(env : env) ~size:(size : int) ~tp:(tp : Domain.t) ~term:(term : 
 
     | Hole name, tp ->
         (* Printf.printf "got check hole\n%!"; *)
-        Meta.fresh_meta ?name env size tp
+        let tp' = Nbe.read_back_tp size tp in
+        Meta.fresh_meta ?name env size tp' tp
 
     | Mod (mu, t), Tymod (nu, tp) ->
         check_mod_eq nu mu Expected_inferred (Some term);
@@ -737,11 +718,11 @@ and infer
             | Sig (fst, _) -> fst
             | tp' ->
                 let sem_env = env_to_sem_env env in
-                let fst = Meta.fresh_meta env size (Uni ()) in
+                let fst = Meta.fresh_meta_tp env size in
                 let sem_fst = Nbe.eval fst sem_env in
                 let (_, snd_env) =
                     add_var ~size ~mode ~mu:MT.idm ~tp:sem_fst env in
-                let snd = Meta.fresh_meta snd_env (size + 1) (Uni ()) in
+                let snd = Meta.fresh_meta_tp snd_env (size + 1) in
                 let sigm = D.Sig
                     (sem_fst, D.Clos { term = snd; env = env_to_sem_env env }) in
                 unify_catch ~size ~term:p sigm tp' Expected_inferred
@@ -756,11 +737,11 @@ and infer
             | Sig (_, snd_clos) -> snd_clos
             | tp' ->
                 let sem_env = env_to_sem_env env in
-                let fst = Meta.fresh_meta env size (Uni ()) in
+                let fst = Meta.fresh_meta_tp env size in
                 let sem_fst = Nbe.eval fst sem_env in
                 let (_, snd_env) =
                     add_var ~size ~mode ~mu:MT.idm ~tp:sem_fst env in
-                let snd = Meta.fresh_meta snd_env (size + 1) (Uni ()) in
+                let snd = Meta.fresh_meta_tp snd_env (size + 1) in
                 let snd_clos = D.Clos { term = snd; env = sem_env } in
                 let sigm = D.Sig
                     (sem_fst, snd_clos) in
@@ -787,9 +768,9 @@ and infer
                     | Some mu -> mu
                     | None -> elab_error (Cant_infer_modality term)
                 in
-                let dom = Nbe.eval (Meta.fresh_meta env size (Uni ())) sem_env in
+                let dom = Nbe.eval (Meta.fresh_meta_tp env size) sem_env in
                 let (_, new_env) = add_var ~size ~mode ~mu ~tp:dom env in
-                let cod = Meta.fresh_meta new_env size (Uni ()) in
+                let cod = Meta.fresh_meta_tp new_env size in
                 let cod_clos = D.Clos { term = cod; env = sem_env } in
                 let pi = D.Pi (mu, dom, cod_clos) in
                 unify_catch ~size ~term:fn pi fn_tp Expected_inferred
@@ -811,7 +792,7 @@ and infer
             | None -> elab_error (Cant_infer_modality term)
         in
         let arg_env = M mu :: env in
-        let arg_meta = Meta.fresh_meta arg_env size (Uni ()) in
+        let arg_meta = Meta.fresh_meta_tp arg_env size in
         let argtp = Nbe.eval arg_meta (env_to_sem_env arg_env) in
         let (var, new_env) = add_var ~size ~mode ~mu ~tp:argtp env in
 
@@ -833,9 +814,9 @@ and infer
 
     | Hole name ->
         (* Printf.printf "got infer hole\n%!"; *)
-        let tp = Meta.fresh_meta env size (Uni ()) in
+        let tp = Meta.fresh_meta_tp env size in
         let sem_tp = Nbe.eval tp (env_to_sem_env env) in
-        let tm = Meta.fresh_meta ?name env size sem_tp in
+        let tm = Meta.fresh_meta ?name env size tp sem_tp in
         (sem_tp, tm)
 
     | TyMod (mu, tp) ->
@@ -863,7 +844,7 @@ and infer
                 check_mod_eq x.mod2 mu Expected_inferred (Some term);
                 it
             | tp ->
-                let it = Meta.fresh_meta env size (D.Uni ()) in
+                let it = Meta.fresh_meta_tp env size in
                 let sem_it = Nbe.eval it sem_env in
                 let mod_ty = D.Tymod (x.mod2, sem_it) in
                 unify_catch ~size ~term:x.scrutinee mod_ty tp Expected_inferred

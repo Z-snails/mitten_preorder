@@ -285,9 +285,8 @@ and synth ~env ~size ~term ~m =
   | Syn.Axiom (_, tp) -> Nbe.eval tp (env_to_sem_env env)
   | Syn.Meta (m, sub) ->
     let entry = Meta.lookup m in
-    let off = size - entry.size in
-    let sub = List.map (fun t -> lazy (Nbe.eval t (env_to_sem_env env))) sub in
-    Nbe.subst (sub, off) entry.tp
+    let sem_sub = Nbe.eval_sub ~env:(env_to_sem_env env) sub in
+    Nbe.eval entry.tp (Nbe.create_env m sem_sub)
   | _ -> tp_error (Cannot_synth_term term)
 
 and check_tp ~env ~size ~term ~m =

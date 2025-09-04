@@ -60,7 +60,8 @@ type entry = {
     name: string;
     context: env;
     size: int;
-    tp: Domain.t;
+    sem_tp: Domain.t;
+    tp: Syntax.t;
     mutable value: (Domain.t * Syntax.t) option;
     mutable used_by: MetaSet.t (* TODO: use this (see README.md) *)
 }
@@ -90,12 +91,16 @@ let vars (env : env) : Syntax.t list =
     in fst (go env)
 
 let fresh_meta
-    ?name:(name : string option) (env : env) (size : int) (tp : Domain.t) : Syntax.t =
+    ?name:(name : string option) (env : env) (size : int)
+    (tp : Syntax.t) (sem_tp : Domain.t) : Syntax.t =
     let m = create (fun m ->
         let n = Option.value name ~default:(string_of_int m) in
-        { name = n; context = env; size; tp
+        { name = n; context = env; size; tp; sem_tp
         ; value = None; used_by = MetaSet.empty }) in
     Meta (m, vars env)
+
+let fresh_meta_tp ?name:(name : string option) (env : env) (size : int) : Syntax.t =
+    fresh_meta ?name env size (Uni ()) (Uni ())
 
 let lookup (S.Metavar (m, _)) : entry =
     MetaMap.find m !store
@@ -152,22 +157,8 @@ let weaken_tm ~amount:(amount : int) (tm : Syntax.t) : Syntax.t =
 
 let find (e : sub_env) (v : int) : Syntax.t =
     if v < e.weakens
-    then Syntax.Var v (* A local variable *)
-    (* else weaken_tm ~amount:e.weakens (List.nth e.root (v - e.weakens)) *)
-    else
-        let new_v = v - e.weakens in
-    try
-    weaken_tm ~amount:e.weakens (List.nth e.root new_v)
-        with
-            | err ->
-            Printf.printf "Failure: v = %d, new_v = %d, length root = %d, weakens = %d\n%!" v new_v (List.length e.root) e.weakens;
-            Printf.printf "%s\n%!" (String.concat "\n" (List.map Syntax.pp e.root));
-            raise err
-        (* let new_v = v - e.weakens in *)
-        (* (* S.todo "find" *) *)
-        (* match List.nth e.root (v - e.weakens) with *)
-        (* | Some tm -> weaken_tm ~amount:e.weakens tm *)
-        (* | None -> Var new_v *)
+    then Syntax.Var v (* A local variable, so don't adjust *)
+    else weaken_tm ~amount:e.weakens (List.nth e.root (v - e.weakens))
 
 (** Remove all solved metavariables from a term *)
 let remove_solved (env : env) (t : Syntax.t) : Syntax.t =
@@ -201,16 +192,16 @@ let remove_solved (env : env) (t : Syntax.t) : Syntax.t =
                 , go (weaken env) body, go env tm)
         | S.Axiom (n, tp) -> S.Axiom (n, go env tp)
         | S.Meta (m, sub) ->
-            Printf.printf "remove_solved/Meta %s\n%!" (S.show_metavar m);
-            Printf.printf "%s\n%!" (String.concat "\n" (List.map Syntax.pp sub));
-            ignore @@ List.map (fun t ->
-                try go env t with e -> Printf.printf "  failed in term %s\n%!" (S.pp t); raise e) sub;
+            (* Printf.printf "remove_solved/Meta %s\n%!" (S.show_metavar m); *)
+            (* Printf.printf "%s\n%!" (String.concat "\n" (List.map Syntax.pp sub)); *)
+            (* ignore @@ List.map (fun t -> *)
+            (*     try go env t with e -> Printf.printf "  failed in term %s\n%!" (S.pp t); raise e) sub; *)
             let entry = lookup m in
             let res = match entry.value with
                 | Some (_, v) -> go env (subst sub v)
                 | None -> S.Meta (m, List.map (go env) sub)
             in
-            Printf.printf "  remove_soved %s solved to\n%s\n%!" (S.show_metavar m) (S.pp res);
+            (* Printf.printf "  remove_soved %s solved to\n%s\n%!" (S.show_metavar m) (S.pp res); *)
             res
 
     and subst (sub : Syntax.t list) (t : Syntax.t) : Syntax.t =

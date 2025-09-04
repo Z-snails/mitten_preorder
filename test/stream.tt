@@ -48,15 +48,11 @@ let StrT : {d | U<0>} -> U<0> @ T =
 let Str : U<0> -> U<0> @ S =
     fun A -> << g | StrT A >>
 
-;quit
-
 ;; pair (x, xs) but uses lob1Beta to make that type check
 let consT
     : (A : {d | U<0>}) -> << d | A >> -> << l | StrT A >> -> StrT A @ T
     = fun A x xs ->
-        transp_inv ?cons1 ?cons2 (lob1Beta (StrRec ?cons3)) (pair (x, xs))
-
-quit
+        transp_inv _ _ (lob1Beta (StrRec _)) (pair (x, xs))
 
 let unconsT
     : (A : {d | U<0>}) -> (StrT A) -> (<< d | A >> * << l | StrT A >>) @ T
@@ -85,6 +81,11 @@ let compgl : (A : {g | U<0>}) -> (<< g | << l | A >> >>) -> << g | A >> @ S =
     letmod idm mod g (x0) <- x at _ -> << g | A >> in
     letmod g mod l (x1) <- x0 at _ -> << g | A >> in
     mod g x1
+
+let tail : (A : U<0>) -> (Str A) -> Str A @ S =
+    fun A xs ->
+        letmod idm mod g (xs0) <- xs at _ -> Str A in
+        compgl _ ?tailRhs
 
 ; let tail : (A : U<0>) -> (Str A) -> Str A @ S =
 ;     fun A xs ->

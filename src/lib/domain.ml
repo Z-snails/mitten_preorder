@@ -77,16 +77,7 @@ let elim (e : elim) (t : ne) : ne = { head = t.head; spine = e :: t.spine }
 
 let axiom (name : string) (tp : t) = { head = Axiom (name, tp); spine = [] }
 
-let meta (m : S.metavar) (sub : tp_sub) =
-let Metavar (_, n) = m in
-  if n = "cons1" then
-    begin
-      Printf.printf "creating meta ?cons1 with spine\n%s"
-        (String.concat "\n" (List.map (fun x -> show (Lazy.force x)) (untp_sub sub)));
-
-    Printexc.get_callstack 10 |> Printexc.raw_backtrace_to_string |> print_endline;
-    end;
-  { head = Meta (m, sub); spine = [] }
+let meta (m : S.metavar) (sub : tp_sub) = { head = Meta (m, sub); spine = [] }
 
 (* env_val is giving the nth entry of the environment list, ONLY counting values. env_cell then gives the corresponding
    cell as it is required for the nbe algorithm *)
