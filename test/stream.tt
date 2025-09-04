@@ -72,9 +72,9 @@ let fib : Str Nat @ S = mod g fibT
 
 let head : (A : U<0>) -> (Str A) -> A @ S =
     fun A xs ->
-    letmod idm mod g (xs0) <- xs at _ -> A in
-    letmod g mod d (x0) <- fst (unconsT _ xs0) at _ -> A in
-    x0
+        letmod idm mod g (xs0) <- xs at _ -> A in
+        letmod g mod d (x0) <- fst (unconsT _ xs0) at _ -> A in
+        x0
 
 let compgl : (A : {g | U<0>}) -> (<< g | << l | A >> >>) -> << g | A >> @ S =
     fun A x ->
@@ -85,10 +85,4 @@ let compgl : (A : {g | U<0>}) -> (<< g | << l | A >> >>) -> << g | A >> @ S =
 let tail : (A : U<0>) -> (Str A) -> Str A @ S =
     fun A xs ->
         letmod idm mod g (xs0) <- xs at _ -> Str A in
-        compgl _ ?tailRhs
-
-; let tail : (A : U<0>) -> (Str A) -> Str A @ S =
-;     fun A xs ->
-;     letmod idm (fun _ -> A) mod g (xs0) <- xs in
-;     ;; compgl {g, StrT {d, A}} (mod g (snd (unconsT {d, A} xs0)))
-;     compgl {g, StrT {d, A}} (hole << g | << l | StrT {d, A} >> >>)
+        compgl _ (mod g (snd (unconsT _ xs0)))
