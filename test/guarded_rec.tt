@@ -329,7 +329,7 @@ let nth : Nat -> (stream Nat) -> Nat @ S =
     fun n ->
     rec n at _ -> (stream Nat) -> Nat with
     | zero -> (fun str -> head Nat str)
-    | suc _, p -> (fun str -> p _)
+    | suc _, p -> (fun str -> p (tail _ str))
 
 
 let map : (A : U<0>) -> (A -> A) -> (gstream A) -> gstream A @ T =

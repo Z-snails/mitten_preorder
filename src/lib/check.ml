@@ -37,7 +37,7 @@ let assert_subtype m size t1 t2 term =
   if Nbe.check_tp m ~subtype:false size t1 t2
   then ()
   else
-    (Printf.printf "About to readback %s and %s\n" (Domain.show t1) (Domain.show t2);
+    (Printf.printf "About to readback %s\nand\n%s\n" (Domain.show t1) (Domain.show t2);
     tp_error (Type_mismatch (Nbe.read_back_tp size t1, Nbe.read_back_tp size t2, term)))
 
 let assert_equal m size t1 t2 tp =
@@ -46,7 +46,7 @@ let assert_equal m size t1 t2 tp =
   if Nbe.check_nf m size nf1 nf2
   then ()
   else
-    (Printf.printf "About to readback %s and %s\n" (Domain.show t1) (Domain.show t2);
+    (Printf.printf "About to readback %s\nand\n%s\n" (Domain.show t1) (Domain.show t2);
     tp_error (Term_or_Type_mismatch (Nbe.read_back_nf size nf1, Nbe.read_back_nf size nf2)))
 
 let check_mode m n tm =
@@ -95,7 +95,7 @@ let rec check ~env ~size ~term ~tp ~m =
       | D.Pi (mu, src , dest) ->
         let new_mode = dom_mod mu m in
         let var = D.mk_var src size in
-        let dest_tp = Nbe.do_clos dest var in
+        let dest_tp = Nbe.do_clos' dest var in
         check ~env:(add_term ~md:new_mode ~term:var ~tp:src ~mu:mu env) ~size:(size + 1) ~term:f ~tp:dest_tp ~m ;
       | t -> tp_error (Misc ("Expecting Pi but found\n" ^ d_pp size t))
     end
@@ -104,7 +104,7 @@ let rec check ~env ~size ~term ~tp ~m =
       match Nbe.force size tp with
       | D.Sig (left_tp, right_tp) ->
         check ~env ~size ~term:left ~tp:left_tp ~m;
-        let left_sem = Nbe.eval left (env_to_sem_env env) in
+        let left_sem = lazy (Nbe.eval left (env_to_sem_env env)) in
         check ~env ~size ~term:right ~tp:(Nbe.do_clos right_tp left_sem) ~m
       | t -> tp_error (Misc ("Expecting Sig but found\n" ^ d_pp size t))
     end
@@ -199,7 +199,7 @@ and synth ~env ~size ~term ~m =
     begin
       match Nbe.force size (synth ~env ~size ~term:p ~m) with
       | Sig (_, right_tp) ->
-        let proj = Nbe.eval (Fst p) (env_to_sem_env env) in
+        let proj = lazy (Nbe.eval (Fst p) (env_to_sem_env env)) in
         Nbe.do_clos right_tp proj
       | t -> tp_error (Misc ("Expecting Sig but found\n" ^ d_pp size t))
     end
@@ -212,7 +212,7 @@ and synth ~env ~size ~term ~m =
         let new_env = (M mu :: env) in
         let new_mode = dom_mod mu m in
         check ~env:new_env ~size ~term:a ~tp:src ~m:new_mode;
-        let a_sem = Nbe.eval a (env_to_sem_env new_env) in
+        let a_sem = lazy (Nbe.eval a (env_to_sem_env new_env)) in
         Nbe.do_clos dest a_sem
       | t -> tp_error (Misc ("Expecting Pi but found\n" ^ d_pp size t))
     end
@@ -221,18 +221,20 @@ and synth ~env ~size ~term ~m =
     let var = D.mk_var Nat size in
     check_tp ~env:(add_term ~md:m ~term:var ~mu:idm ~tp:Nat env) ~size:(size + 1) ~term:mot ~m;
     let sem_env = env_to_sem_env env in
-    let zero_tp = Nbe.eval mot ((D.Val Zero) :: sem_env) in
-    let ih_tp = Nbe.eval mot ((D.Val var) :: sem_env) in
+    let zero_tp = Nbe.eval mot ((D.Val (Lazy.from_val D.Zero)) :: sem_env) in
+    let ih_tp = Nbe.eval mot ((D.Val (Lazy.from_val var)) :: sem_env) in
     let ih_var = D.mk_var ih_tp (size + 1) in
-    let suc_tp = Nbe.eval mot (Val (Suc var) :: sem_env) in
+    let suc_tp = Nbe.eval mot (Val (Lazy.from_val (D.Suc var)) :: sem_env) in
     check ~env ~size ~term:zero ~tp:zero_tp ~m;
     check
-      ~env:(add_term ~md:m ~term:var ~mu:idm ~tp:Nat env |> add_term ~md:m ~term:ih_var ~mu:idm ~tp:ih_tp)
+      ~env:(
+        add_term ~md:m ~term:var ~mu:idm ~tp:Nat env
+        |> add_term ~md:m ~term:ih_var ~mu:idm ~tp:ih_tp)
       ~size:(size + 2)
       ~term:suc
       ~tp:suc_tp
       ~m ;
-    Nbe.eval mot (Val (Nbe.eval n sem_env) :: sem_env)
+    Nbe.eval mot (Val (lazy (Nbe.eval n sem_env)) :: sem_env)
 
   (* letmod mu (mot) mod nu (_) <- tm in deptm *)
   | Syn.Letmod (mu, nu, mot, deptm, tm) ->
@@ -255,10 +257,10 @@ and synth ~env ~size ~term ~m =
           add_term ~term:(D.mk_var tp size) ~md:(dom_mod (compm (mu, nu1)) m)
             ~tp ~mu:(compm (mu, nu1)) env in
         let base_sem_env = env_to_sem_env env in
-        let sem_env =  D.Val (D.Mod (nu1, D.mk_var tp size)) :: base_sem_env in
+        let sem_env =  D.Val (Lazy.from_val @@ D.Mod (nu1, D.mk_var tp size)) :: base_sem_env in
         let sem_deptm_ty = Nbe.eval mot sem_env in
         check ~env:deptm_env ~size:(size + 1) ~term:deptm ~tp:sem_deptm_ty ~m;
-        let final_tp_env = D.Val (Nbe.eval tm base_sem_env) :: base_sem_env in
+        let final_tp_env = D.Val (lazy (Nbe.eval tm base_sem_env)) :: base_sem_env in
         Nbe.eval mot final_tp_env
       | _ -> tp_error (Misc ("Expecting Modal Type with"^ mod_pp nu ^ "but found \n" ^ d_pp size tp1))
     end
@@ -277,9 +279,18 @@ and synth ~env ~size ~term ~m =
           |> add_term ~md:m ~term:mot_var3 ~mu:idm ~tp:(D.Id (tp', mot_var1, mot_var2)) in
         check_tp ~env:mot_env ~size:(size + 3) ~term:mot ~m;
         let refl_var = D.mk_var tp' size in
-        let refl_tp = Nbe.eval mot (D.Val (D.Refl refl_var) :: D.Val refl_var :: D.Val refl_var :: sem_env) in
-        check ~env:(add_term ~md:m ~term:refl_var ~mu:idm ~tp:tp' env) ~size:(size + 1) ~term:refl ~tp:refl_tp ~m;
-        Nbe.eval mot (D.Val (Nbe.eval eq sem_env) :: D.Val right :: D.Val left :: sem_env)
+        let refl_tp =
+          Nbe.eval mot
+            (D.Val (Lazy.from_val @@ D.Refl refl_var)
+              :: D.Val (Lazy.from_val refl_var)
+              :: D.Val (Lazy.from_val refl_var) :: sem_env) in
+        check
+          ~env:(add_term ~md:m ~term:refl_var ~mu:idm ~tp:tp' env)
+          ~size:(size + 1) ~term:refl ~tp:refl_tp ~m;
+        Nbe.eval mot
+          (D.Val (lazy (Nbe.eval eq sem_env))
+            :: D.Val (Lazy.from_val right)
+            :: D.Val (Lazy.from_val left) :: sem_env)
       | t -> tp_error (Misc ("Expecting Id but found\n" ^ d_pp size t))
     end
   | Syn.Axiom (_, tp) -> Nbe.eval tp (env_to_sem_env env)

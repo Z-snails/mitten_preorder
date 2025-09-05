@@ -10,10 +10,11 @@ let perform_norm input =
 
 let main input =
   try perform_norm input; 0 with
+  (* Don't catch internal errors so that we get backtraces *)
   (* | Invalid_argument s -> Printf.eprintf "Internal error (invalid argument): %s\n" s; 1 *)
   (* | Failure s -> Printf.eprintf "Internal error (Failure): %s\n" s; 1 *)
+  (* | Nbe.Nbe_failed s -> Printf.eprintf "Internal error (Failed to normalize): %s\n" s; 1 *)
   | Load.Parse_error s -> Printf.eprintf "Frontend error: %s\n" s; 1
-  | Nbe.Nbe_failed s -> Printf.eprintf "Internal error (Failed to normalize): %s\n" s; 1
   | Check.Type_error e -> Printf.eprintf "Type error\n%s\n" (Check.pp_error e); 1
   | Syntax.Illformed -> Printf.eprintf "Syntax error.\n"; 1
   | Mode_theory.Modality_error str -> Printf.eprintf "Modality error: %s\n" str; 1

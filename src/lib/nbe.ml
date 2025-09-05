@@ -9,8 +9,8 @@ let create_env (meta : Syn.metavar) (sub : D.sub) =
   let rec go (ctx : Meta.Check_env.env) (sub : D.sub) =
     match ctx, sub with
     | [], [] -> []
-    | TopLevel { term } :: ctx', _ :: sub' -> D.Val term :: go ctx' sub'
-    | Term _ :: ctx', lazy t :: sub' ->
+    | TopLevel { term } :: ctx', _ :: sub' -> D.Val (Lazy.from_val term) :: go ctx' sub'
+    | Term _ :: ctx', t :: sub' ->
       D.Val t :: go ctx' sub'
     | M mu :: ctx', sub' -> D.M mu :: go ctx' sub'
     | _ -> failwith "Unreachable"
@@ -22,21 +22,25 @@ let rec clos_mod (D.Clos {term; env}) mu = D.Clos {term = term; env = D.M mu :: 
 
 and gen_do_clos (D.Clos {term; env}) a = eval term (a :: env)
 and do_clos clos a = gen_do_clos clos (D.Val a)
+and do_clos' clos a = do_clos clos (Lazy.from_val a)
 
 and gen_do_clos2 (D.Clos2 {term; env}) a1 a2 = eval term ( a2 :: a1 :: env)
 and do_clos2 clos a1 a2 = gen_do_clos2 clos (Val a1) (Val a2)
+and do_clos2' clos a b = do_clos2 clos (Lazy.from_val a) (Lazy.from_val b)
 
 and gen_do_clos3 (D.Clos3 {term; env}) a1 a2 a3 = eval term (a3 :: a2 :: a1 :: env)
 and do_clos3 clos a1 a2 a3 = gen_do_clos3 clos (Val a1) (Val a2) (Val a3)
+and do_clos3' clos a b c =
+  do_clos3 clos (Lazy.from_val a) (Lazy.from_val b) (Lazy.from_val c)
 
 (* TODO: all eliminators should use force: see test/03-holes.tt for tests *)
 (* Or: be very careful to call force before calling do_<elim> *)
-and do_nrec tp zero suc n =
+and do_nrec tp zero suc n : Domain.t =
   match n with
   | D.Zero -> zero
-  | D.Suc m -> do_clos2 suc m (do_nrec tp zero suc m)
+  | D.Suc m -> do_clos2 suc (Lazy.from_val m) (lazy (do_nrec tp zero suc m))
   | D.Neutral {term = e; _} ->
-    let final_tp = do_clos tp n in
+    let final_tp = do_clos' tp n in
     D.Neutral {tp = final_tp; term = D.elim (D.NRec { motive = tp; zero; suc }) e}
   | _ -> raise (Nbe_failed "Not a number")
 
@@ -58,7 +62,7 @@ and do_snd p =
     begin
       match tp with
       | D.Sig (_, clo) ->
-        let fst = do_fst p in
+        let fst = lazy (do_fst p) in
         D.Neutral {tp = do_clos clo fst; term = D.elim D.Snd ne}
       | _ -> raise (Nbe_failed "Couldn't snd argument in do_snd")
     end
@@ -74,7 +78,8 @@ and do_ap f a =
       | D.Pi (mu, src, dst) ->
         let dst = do_clos dst a in
         D.Neutral
-          { tp = dst; term = D.elim (D.Ap (mu, D.Normal { tp = src; term = a })) e }
+          { tp = dst
+          ; term = D.elim (D.Ap (mu, D.Normal { tp = src; term = Lazy.force a })) e }
       | _ ->
         (* Printf.printf "in do_ap, got unexpected %s" (D.show tp); *)
         raise (Nbe_failed "Not a Pi in do_ap")
@@ -83,13 +88,13 @@ and do_ap f a =
 
 and do_j mot refl eq =
   match eq with
-  | D.Refl t -> do_clos refl t
+  | D.Refl t -> do_clos' refl t
   | D.Neutral {tp; term} ->
     begin
       match tp with
       | D.Id (tp, left, right) ->
         D.Neutral
-          { tp = do_clos3 mot left right eq;
+          { tp = do_clos3' mot left right eq;
             term = D.elim (D.J { motive = mot; refl; tp; left; right }) term }
       | _ -> raise (Nbe_failed "Not an Id in do_j")
     end
@@ -97,12 +102,12 @@ and do_j mot refl eq =
 
 and do_letmod nu tyclos body def =
   match def with
-  | D.Mod (_, tm1) -> do_clos body tm1
+  | D.Mod (_, tm1) -> do_clos' body tm1
   | D.Neutral {tp; term = e} ->
     begin
       match tp with
       | D.Tymod (mu, argtp) ->
-        let tp2 = do_clos tyclos (D.Neutral {tp = D.Tymod (mu, argtp); term = e}) in
+        let tp2 = do_clos' tyclos (D.Neutral {tp = D.Tymod (mu, argtp); term = e}) in
         D.Neutral
           { tp = tp2; term =
             D.elim (D.Letmod { mod1 = mu; mod2 = nu; motive = tyclos; body; argtp }) e }
@@ -121,7 +126,7 @@ and eval t (env : D.env) =
   (*       Printf.printf "Variable %d in env of length %d\n" id (List.length env); *)
   (*       raise e *)
   (*     end *)
-  | Syn.Let (def, body) -> eval body ((D.Val (eval def env)) :: env)
+  | Syn.Let (def, body) -> eval body ((D.Val (lazy (eval def env))) :: env)
   | Syn.Check (term, _) -> eval term env
   | Syn.Nat -> D.Nat
   | Syn.Zero -> D.Zero
@@ -135,7 +140,7 @@ and eval t (env : D.env) =
   | Syn.Pi (mu, src, dest) ->
     D.Pi (mu, (eval src (D.M mu :: env)), (Clos {term = dest; env}))
   | Syn.Lam t -> D.Lam (Clos {term = t; env})
-  | Syn.Ap (mu, t1, t2) -> do_ap (eval t1 env) (eval t2 (D.M mu :: env))
+  | Syn.Ap (mu, t1, t2) -> do_ap (eval t1 env) (lazy (eval t2 (D.M mu :: env)))
   | Syn.Uni i -> D.Uni i
   | Syn.Sig (t1, t2) -> D.Sig (eval t1 env, (Clos {term = t2; env}))
   | Syn.Pair (t1, t2) -> D.Pair (eval t1 env, eval t2 env)
@@ -219,7 +224,7 @@ and eval_sub ~env:(env : D.env) (sp : Syntax.t list) : D.sub =
 
 and do_elim (elim : Domain.elim) (tm : Domain.t) : Domain.t =
     match elim, tm with
-    | Ap (mu, Normal a), tm -> do_ap tm a.term
+    | Ap (mu, Normal a), tm -> do_ap tm (Lazy.from_val a.term)
     | Fst, tm -> do_fst tm
     | Snd, tm -> do_snd tm
     | NRec x, tm -> do_nrec x.motive x.zero x.suc tm
@@ -239,7 +244,7 @@ and subst_clos3 (sub : D.sub * int) (D.Clos3 { term; env }) : D.clos3 =
 
 and subst_env (sub : D.sub * int) (env : Domain.env) : Domain.env =
     List.map (function
-        | D.Val v -> D.Val (subst sub v)
+        | D.Val v -> D.Val (Lazy.map (subst sub) v)
         | D.M mu -> D.M mu
     ) env
 
@@ -311,6 +316,7 @@ let rec force (size : int) (t : Domain.t) : Domain.t =
       (*   let v' = subst (D.untp_sub sub, off) v in *)
       (*   force size (do_spine spine v') *)
       | Some (_, v) ->
+        Printf.printf "forcing %s\n%!" (Syn.show_metavar m);
         let env = create_env m (D.untp_sub sub) in
         force size (eval v env)
     end
@@ -325,12 +331,15 @@ let rec read_back_nf size (D.Normal { tp; term = v }) =
   match force size tp with
   | Pi (_, src, dest) ->
     let arg = D.mk_var src size in
-    let nf = D.Normal {tp = do_clos dest arg; term = do_ap v arg} in
+    let nf =
+      D.Normal
+        { tp = do_clos' dest arg
+        ; term = do_ap v (Lazy.from_val arg) } in
     Syn.Lam (read_back_nf (size + 1) nf)
   (* Pairs *)
   | D.Sig (fst, snd) ->
     let fst' = do_fst v in
-    let snd = do_clos snd fst' in
+    let snd = do_clos' snd fst' in
     let snd' = do_snd v in
     Syn.Pair
       (read_back_nf size (D.Normal { tp = fst; term = fst'}),
@@ -352,14 +361,16 @@ let rec read_back_nf size (D.Normal { tp; term = v }) =
       | D.Nat -> Syn.Nat
       | D.Pi (mu, src, dest) ->
         let var = D.mk_var src size in
-        Syn.Pi (mu,
-                read_back_nf size (D.Normal {tp = D.Uni i; term = src}),
-                read_back_nf (size + 1) (D.Normal {tp = D.Uni i; term = do_clos dest var}))
+        Syn.Pi
+          (mu
+          , read_back_nf size (D.Normal {tp = D.Uni i; term = src})
+          , read_back_nf (size + 1)
+              (D.Normal {tp = D.Uni i; term = do_clos' dest var}))
       | D.Sig (fst, snd) ->
         let var = D.mk_var fst size in
         Syn.Sig
           (read_back_nf size (D.Normal {tp = D.Uni i; term = fst}),
-           read_back_nf (size + 1) (D.Normal {tp = D.Uni i; term = do_clos snd var}))
+           read_back_nf (size + 1) (D.Normal {tp = D.Uni i; term = do_clos' snd var}))
       | D.Uni j -> Syn.Uni j
       | D.Id (tp, le, ri) ->
         Syn.Id (
@@ -406,9 +417,9 @@ and read_back_tp size d =
   | D.Nat -> Syn.Nat
   | D.Pi (mu, src, dest) ->
     let var = D.mk_var src size in
-    Syn.Pi (mu, read_back_tp size src, read_back_tp (size + 1) (do_clos dest var))
+    Syn.Pi (mu, read_back_tp size src, read_back_tp (size + 1) (do_clos' dest var))
   | D.Sig (fst, snd) ->
-    let var = D.mk_var fst size in
+    let var = Lazy.from_val (D.mk_var fst size) in
     Syn.Sig (read_back_tp size fst, read_back_tp (size + 1) (do_clos snd var))
   | D.Id (tp, left, right) ->
     Syn.Id
@@ -449,15 +460,15 @@ and read_back_elim (size : int) (elim : D.elim) (tm : Syn.t) = match elim with
 
   | D.NRec { motive; zero; suc } ->
     let tp_var = D.mk_var D.Nat size in
-    let applied_tp = do_clos motive tp_var in
+    let applied_tp = do_clos motive (Lazy.from_val tp_var) in
     let tp' = read_back_tp (size + 1) applied_tp in
 
     (* Motive at zero and suc *)
-    let zero_tp = do_clos motive D.Zero in
-    let applied_suc_tp = do_clos motive (D.Suc tp_var) in
+    let zero_tp = do_clos motive (Lazy.from_val D.Zero) in
+    let applied_suc_tp = do_clos motive (Lazy.from_val @@ D.Suc tp_var) in
 
     let suc_var = D.mk_var applied_tp (size + 1) in
-    let applied_suc = do_clos2 suc tp_var suc_var in
+    let applied_suc = do_clos2 suc (Lazy.from_val tp_var) (Lazy.from_val suc_var) in
     let suc' =
       read_back_nf (size + 2) (D.Normal { tp = applied_suc_tp; term = applied_suc }) in
 
@@ -469,10 +480,15 @@ and read_back_elim (size : int) (elim : D.elim) (tm : Syn.t) = match elim with
 
   | D.Letmod { mod1; mod2; motive; body; argtp } ->
     (* ..., _ :mod1 Tymod (mod2, argtp) |- motive : U *)
-    let motive' = do_clos motive (D.mk_var (D.Tymod (mod2, argtp)) size) in
+    let motive' =
+      do_clos motive (Lazy.from_val @@ D.mk_var (D.Tymod (mod2, argtp)) size) in
     (* ..., _ :mod12 argtp |- body : motive[p . mod mod2 q] *)
-    let body_tp = do_clos motive (D.Mod (mod2, D.mk_var argtp size)) in
-    let body' = D.Normal { tp = body_tp; term = do_clos body (D.mk_var argtp size) } in
+    let body_tp =
+      do_clos motive (Lazy.from_val @@ D.Mod (mod2, D.mk_var argtp size)) in
+    let body' =
+      D.Normal
+        { tp = body_tp
+        ; term = do_clos body (Lazy.from_val @@ D.mk_var argtp size) } in
     Syn.Letmod
       ( mod1, mod2
       , read_back_tp (size + 1) motive'
@@ -483,11 +499,12 @@ and read_back_elim (size : int) (elim : D.elim) (tm : Syn.t) = match elim with
   | D.J { motive; refl; tp } ->
     let mot_var1 = D.mk_var tp size and mot_var2 = D.mk_var tp (size + 1) in
     let mot_var3 = D.mk_var (D.Id (tp, mot_var1, mot_var2)) (size + 2) in
-    let mot_syn = read_back_tp (size + 3) (do_clos3 motive mot_var1 mot_var2 mot_var3) in
+    let mot_syn =
+      read_back_tp (size + 3) (do_clos3' motive mot_var1 mot_var2 mot_var3) in
     let refl_var = D.mk_var tp size in
     let refl_syn = read_back_nf (size + 1) (D.Normal
-        { tp = do_clos3 motive refl_var refl_var (D.Refl refl_var)
-        ; term = do_clos refl refl_var
+        { tp = do_clos3' motive refl_var refl_var (D.Refl refl_var)
+        ; term = do_clos' refl refl_var
         }) in
     Syn.J
       ( mot_syn
@@ -510,15 +527,15 @@ let rec check_nf m size nf1 nf2 =
   | D.Normal {tp = D.Pi (mu, src1, dest1); term = f1},
     D.Normal {tp = D.Pi (nu, _, dest2); term = f2} ->
     let arg = D.mk_var src1 size in
-    let nf1 = D.Normal {tp = do_clos dest1 arg; term = do_ap f1 arg} in
-    let nf2 = D.Normal {tp = do_clos dest2 arg; term = do_ap f2 arg} in
+    let nf1 = D.Normal {tp = do_clos' dest1 arg; term = do_ap f1 (Lazy.from_val arg)} in
+    let nf2 = D.Normal {tp = do_clos' dest2 arg; term = do_ap f2 (Lazy.from_val arg)} in
     eq_mod mu nu && check_nf m (size + 1) nf1 nf2
   (* Pairs *)
   | D.Normal {tp = D.Sig (fst1, snd1); term = p1},
     D.Normal {tp = D.Sig (fst2, snd2); term = p2} ->
     let p11, p21 = do_fst p1, do_fst p2 in
-    let snd1 = do_clos snd1 p11 in
-    let snd2 = do_clos snd2 p21 in
+    let snd1 = do_clos' snd1 p11 in
+    let snd2 = do_clos' snd2 p21 in
     let p12, p22 = do_snd p1, do_snd p2 in
     check_nf m size (D.Normal {tp = fst1; term = p11}) (D.Normal {tp = fst2; term = p21})
     && check_nf m size (D.Normal {tp = snd1; term = p12}) (D.Normal {tp = snd2; term = p22})
@@ -557,14 +574,14 @@ let rec check_nf m size nf1 nf2 =
     eq_mod mu nu &&
     let new_m = dom_mod mu m in
     check_nf new_m size (D.Normal {tp = D.Uni i; term = src1}) (D.Normal {tp = D.Uni j; term = src2})
-    && check_nf m (size + 1) (D.Normal {tp = D.Uni i; term = do_clos dest1 var})
-      (D.Normal {tp = D.Uni j; term = do_clos dest2 var})
+    && check_nf m (size + 1) (D.Normal {tp = D.Uni i; term = do_clos' dest1 var})
+      (D.Normal {tp = D.Uni j; term = do_clos' dest2 var})
   | D.Normal {tp = D.Uni i; term = D.Sig (src1, dest1)},
     D.Normal {tp = D.Uni j; term = D.Sig (src2, dest2)} ->
     let var = D.mk_var src1 size in
     check_nf m size (D.Normal {tp = D.Uni i; term = src1}) (D.Normal {tp = D.Uni j; term = src2})
-    && check_nf m (size + 1) (D.Normal {tp = D.Uni i; term = do_clos dest1 var})
-      (D.Normal {tp = D.Uni j; term = do_clos dest2 var})
+    && check_nf m (size + 1) (D.Normal {tp = D.Uni i; term = do_clos' dest1 var})
+      (D.Normal {tp = D.Uni j; term = do_clos' dest2 var})
   | D.Normal {tp = D.Uni i; term = D.Tymod (mu, tp)},
     D.Normal {tp = D.Uni j; term = D.Tymod (nu, tp1)} ->
     eq_mod mu nu &&
@@ -631,10 +648,10 @@ and check_elim (m : mode) (size : int) (e1 : D.elim) (e2 : D.elim) =
     check_tp arg_m ~subtype:false size x.argtp y.argtp &&
     let mot_var = D.mk_var (Tymod (x.mod2, x.argtp)) size in
     check_tp m ~subtype:false (size + 1)
-      (do_clos x.motive mot_var) (do_clos y.motive mot_var) &&
+      (do_clos' x.motive mot_var) (do_clos' y.motive mot_var) &&
     let body_var = D.mk_var x.argtp size in
-    let body_tp = do_clos x.motive (D.Mod (x.mod2, body_var)) in
-    check m size ~tp:body_tp (do_clos x.body body_var) (do_clos y.body body_var)
+    let body_tp = do_clos' x.motive (D.Mod (x.mod2, body_var)) in
+    check m size ~tp:body_tp (do_clos' x.body body_var) (do_clos' y.body body_var)
 
   | J x, J y ->
     check_tp ~subtype:false m size x.tp y.tp &&
@@ -643,13 +660,13 @@ and check_elim (m : mode) (size : int) (e1 : D.elim) (e2 : D.elim) =
     let mot_var2 = D.mk_var x.tp (size + 1) in
     let mot_var3 = D.mk_var (D.Id (x.tp, mot_var1, mot_var2)) (size + 2) in
     check_tp ~subtype:false m (size + 3)
-      (do_clos3 x.motive mot_var1 mot_var2 mot_var3)
-      (do_clos3 y.motive mot_var1 mot_var2 mot_var3) &&
+      (do_clos3' x.motive mot_var1 mot_var2 mot_var3)
+      (do_clos3' y.motive mot_var1 mot_var2 mot_var3) &&
 
     let refl_var = D.mk_var x.tp size in
-    let refl_tp = do_clos3 x.motive refl_var refl_var (D.Refl refl_var) in
+    let refl_tp = do_clos3' x.motive refl_var refl_var (D.Refl refl_var) in
     check m size ~tp:refl_tp
-      (do_clos x.refl refl_var) (do_clos y.refl refl_var)
+      (do_clos' x.refl refl_var) (do_clos' y.refl refl_var)
 
   | _, _ -> false
 
@@ -678,11 +695,11 @@ and check_tp m ~subtype size d1 d2 =
     let var = D.mk_var src' size in
     let new_m = dom_mod mu m in
     eq_mod mu nu && check_tp new_m ~subtype size src' src &&
-    check_tp m ~subtype (size + 1) (do_clos dest var) (do_clos dest' var)
+    check_tp m ~subtype (size + 1) (do_clos' dest var) (do_clos' dest' var)
   | D.Sig (fst, snd), D.Sig (fst', snd') ->
     let var = D.mk_var fst size in
     check_tp m ~subtype size fst fst' &&
-    check_tp m ~subtype (size + 1) (do_clos snd var) (do_clos snd' var)
+    check_tp m ~subtype (size + 1) (do_clos' snd var) (do_clos' snd' var)
   | D.Id (tp1, left1, right1), D.Id (tp2, left2, right2) ->
     check_tp m ~subtype size tp1 tp2 &&
     check_nf m size (D.Normal {tp = tp1; term = left1}) (D.Normal {tp = tp1; term = left2}) &&
@@ -705,7 +722,8 @@ let rec initial_env env =
   | [] -> []
   | Syn.Ty t :: env ->
     let env' = initial_env env in
-    let d = D.mk_var (eval t env') (Syn.env_length env) in
+    (* Evaluating the type may be expensive *)
+    let d = lazy (D.mk_var (eval t env') (Syn.env_length env)) in
     (D.Val d) :: env'
   | Syn.Mo mu :: env ->
     D.M mu :: initial_env env

@@ -18,10 +18,13 @@ val check_tp : Mode_theory.mode -> subtype:bool -> int -> Domain.t -> Domain.t -
 (* Functions to manipulate elements of the semantic domain *)
 val gen_do_clos : Domain.clos -> Domain.envhead -> Domain.t
 val gen_do_clos2 : Domain.clos2 -> Domain.envhead -> Domain.envhead -> Domain.t
-val do_clos : Domain.clos -> Domain.t -> Domain.t
-val do_clos2 : Domain.clos2 -> Domain.t -> Domain.t -> Domain.t
-val do_clos3 : Domain.clos3 -> Domain.t -> Domain.t -> Domain.t -> Domain.t
-val do_ap : Domain.t -> Domain.t -> Domain.t
+val do_clos : Domain.clos -> Domain.t Lazy.t -> Domain.t
+val do_clos' : Domain.clos -> Domain.t -> Domain.t
+val do_clos2 : Domain.clos2 -> Domain.t Lazy.t -> Domain.t Lazy.t -> Domain.t
+val do_clos3 :
+    Domain.clos3 -> Domain.t Lazy.t -> Domain.t Lazy.t -> Domain.t Lazy.t -> Domain.t
+val do_clos3' : Domain.clos3 -> Domain.t -> Domain.t -> Domain.t -> Domain.t
+val do_ap : Domain.t -> Domain.t Lazy.t -> Domain.t
 val do_fst : Domain.t -> Domain.t
 val do_snd : Domain.t -> Domain.t
 

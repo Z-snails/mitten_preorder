@@ -5,7 +5,7 @@ let pp_m (fmt : Format.formatter) (m : m) = Format.fprintf fmt "%s" (mod_pp m)
 let pp_syntax (fmt : Format.formatter) (t : Syntax.t) = Format.fprintf fmt "%s" (S.pp t)
 
 type envhead =
-  | Val of t
+  | Val of t Lazy.t
   | M of m
   [@@deriving show]
 (* Do environments need locks? mitten paper doesn't include locks in environments.
@@ -85,7 +85,7 @@ let meta (m : S.metavar) (sub : tp_sub) = { head = Meta (m, sub); spine = [] }
 let rec env_val env i =
   match env with
   | [] -> raise (Invalid_argument "env_val should not reach the empty list")
-  | Val v :: lst -> if Int.equal i 0 then v
+  | Val v :: lst -> if Int.equal i 0 then Lazy.force v
     else if i > 0 then env_val lst (i - 1)
     else failwith "env_cell does not accept negative input"
   | M _ :: lst -> env_val lst i

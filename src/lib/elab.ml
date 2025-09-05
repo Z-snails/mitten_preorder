@@ -93,7 +93,7 @@ let rec pp_error (e : elab_error) = match e with
             (MT.mod_pp e.left) (MT.mod_pp e.right)
             (Option.fold ~none:"" ~some:(fun x -> " in term\n" ^ show_preterm x) e.term)
     | Missing_2cell e ->
-        Printf.sprintf "Missing 2-cell: cxpected 2-cell from %s to %s in term %s"
+        Printf.sprintf "Missing 2-cell: expected 2-cell from %s to %s in term %s"
             (MT.mod_pp e.lesser) (MT.mod_pp e.greater) (show_preterm e.term)
     | Cant_infer_modality term ->
         Printf.sprintf "Unable to infer modality in %s" (show_preterm term)
@@ -270,7 +270,7 @@ let apply_pren
 
     and go_envhead (h : D.envhead) : D.envhead =
         match (h : D.envhead) with
-        | D.Val t -> D.Val (go t)
+        | D.Val t -> D.Val (Lazy.map go t)
         | D.M mu -> D.M mu
 
     and go_clos (Clos clos : Domain.clos) =
@@ -355,7 +355,7 @@ let solve
         | [], tp -> (size, tp)
         | _ :: spine', Pi (mu, dom, cod) ->
             let (var, new_env) = add_var ~size ~mode ~mu ~tp:dom env in
-            get_env new_env (size + 1) spine' (Nbe.do_clos cod var)
+            get_env new_env (size + 1) spine' (Nbe.do_clos' cod var)
         | _ -> failwith "Expected Pi type in Elab.solve/get_env"
     in
 
@@ -386,15 +386,16 @@ let rec unify
     (* Pi types *)
     | Pi (mu, dom, cod), left', right' ->
         let (var, new_env) = add_var ~size ~mode ~mu ~tp:dom env in
-        let sem_cod = Nbe.do_clos cod var in
-        let sem_left = Nbe.do_ap left' var and sem_right = Nbe.do_ap right' var in
+        let sem_cod = Nbe.do_clos' cod var in
+        let sem_left = Nbe.do_ap left' (Lazy.from_val var) in
+        let sem_right = Nbe.do_ap right' (Lazy.from_val var) in
         unify ~env:new_env ~size:(size + 1) ~tp:sem_cod ~mode sem_left sem_right
 
     | _, Pi (mu1, dom1, cod1), Pi (mu2, dom2, cod2) ->
         check_mod_eq mu1 mu2 Left_right None;
         unify ~env ~size ~tp ~mode dom1 dom2;
         let (var, new_env) = add_var ~size ~mode ~mu:mu1 ~tp:dom1 env in
-        let sem_cod1 = Nbe.do_clos cod1 var and sem_cod2 = Nbe.do_clos cod2 var in
+        let sem_cod1 = Nbe.do_clos' cod1 var and sem_cod2 = Nbe.do_clos' cod2 var in
         unify ~env:new_env ~size ~tp ~mode sem_cod1 sem_cod2
 
     (* Universe *)
@@ -447,13 +448,13 @@ let rec unify
     | _, Sig (fst1, snd1), Sig (fst2, snd2) ->
         unify ~env ~size ~mode ~tp fst1 fst2;
         let (fst_var, new_env) = add_var ~size ~mode ~mu:MT.idm ~tp:fst1 env in
-        let snd1 = Nbe.do_clos snd1 fst_var and snd2 = Nbe.do_clos snd2 fst_var in
+        let snd1 = Nbe.do_clos' snd1 fst_var and snd2 = Nbe.do_clos' snd2 fst_var in
         unify ~env:new_env ~size:(size + 1) ~mode ~tp snd1 snd2;
 
     | Sig (fst_tp, snd_clos), x, y ->
         let fst_x = Nbe.do_fst x and fst_y = Nbe.do_fst y in
         unify ~env ~size ~mode ~tp:fst_tp fst_x fst_y;
-        let snd_tp = Nbe.do_clos snd_clos fst_x in
+        let snd_tp = Nbe.do_clos' snd_clos fst_x in
         unify ~env ~size ~mode ~tp:snd_tp (Nbe.do_snd x) (Nbe.do_snd y)
 
     | tp, x, y ->
@@ -485,14 +486,14 @@ and unify_elim
         unify_tp ~env ~size ~mode x.argtp y.argtp;
         let (mot_var, mot_env) =
             add_var ~size ~mode ~mu:x.mod1 ~tp:(D.Tymod (x.mod2, x.argtp)) env in
-        let mot_x = Nbe.do_clos x.motive mot_var in
-        let mot_y = Nbe.do_clos y.motive mot_var in
+        let mot_x = Nbe.do_clos' x.motive mot_var in
+        let mot_y = Nbe.do_clos' y.motive mot_var in
         unify_tp ~env:mot_env ~size:(size + 1) ~mode mot_x mot_y;
         let (body_var, body_env) =
             add_var ~size ~mode ~mu:(MT.compm (x.mod1, x.mod2)) ~tp:x.argtp env in
-        let body_tp = Nbe.do_clos x.motive (D.Mod (x.mod2, body_var)) in
-        let body_x = Nbe.do_clos x.body body_var in
-        let body_y = Nbe.do_clos y.body body_var in
+        let body_tp = Nbe.do_clos' x.motive (D.Mod (x.mod2, body_var)) in
+        let body_x = Nbe.do_clos' x.body body_var in
+        let body_y = Nbe.do_clos' y.body body_var in
         (* () *)
         (* Printf.printf "About to unify\n%s\nand\n%s\n" (Domain.show body_x) (Domain.show body_y); *)
         (* let pp_clos (D.Clos { term }) = Syntax.pp term in *)
@@ -510,14 +511,14 @@ and unify_elim
             add_var ~size:(size + 2) ~mode ~mu:MT.idm
                 ~tp:(D.Id (x.tp, mot_var1, mot_var2)) mot_env in
         unify_tp ~env:mot_env ~size:(size + 3) ~mode
-            (Nbe.do_clos3 x.motive mot_var1 mot_var2 mot_var3)
-            (Nbe.do_clos3 y.motive mot_var1 mot_var2 mot_var3);
+            (Nbe.do_clos3' x.motive mot_var1 mot_var2 mot_var3)
+            (Nbe.do_clos3' y.motive mot_var1 mot_var2 mot_var3);
 
         let (refl_var, refl_env) =
             add_var ~size ~mode ~mu:MT.idm ~tp:x.tp env in
-        let refl_tp = Nbe.do_clos3 x.motive refl_var refl_var (D.Refl refl_var) in
+        let refl_tp = Nbe.do_clos3' x.motive refl_var refl_var (D.Refl refl_var) in
         unify ~env:refl_env ~size:(size + 1) ~tp:refl_tp ~mode
-            (Nbe.do_clos x.refl refl_var) (Nbe.do_clos y.refl refl_var)
+            (Nbe.do_clos' x.refl refl_var) (Nbe.do_clos' y.refl refl_var)
 
     | _, _ -> elab_error (Unify_error_elim { left; right })
 
@@ -548,12 +549,29 @@ and unify_ne
         (* List.iter2 (fun x y -> unify_nf ~env ~size ~mode x y) sub1 sub2 *)
         unify_sub ~env ~size ~mode ~meta:m1 sub1 sub2
 
-    | _ -> unify_error ~tp (Neutral { tp; term = left }) (Neutral { tp; term = right })
+    (* TODO: this isn't the correct type :( *)
+    | _ -> unify_error (Neutral { tp; term = left }) (Neutral { tp; term = right })
 
 and unify_sub
     ~env:(env : env) ~size:(size : int) ~mode:(mode : mode) ~meta:(meta : S.metavar)
-    (left : Domain.nf Lazy.t list) (right : Domain.nf Lazy.t list) =
-    S.todo "unify_sub"
+    (left : Domain.tp_sub) (right : Domain.tp_sub) =
+
+    let rec go
+        (ctx : Meta.Check_env.env) (left : Domain.tp_sub) (right : Domain.tp_sub) =
+        match ctx, left, right with
+        | [], [], [] -> ()
+        | M _ :: ctx', _, _ -> go ctx' left right
+        | TopLevel _ :: ctx', _ :: left', _ :: right' ->
+            go ctx' left' right'
+        | Term { md } :: ctx'
+        , lazy (D.Normal { tp; term = x }) :: left'
+        , lazy (D.Normal { term = y }) :: right' ->
+            unify ~env ~size ~tp ~mode:md x y;
+            go ctx' left' right'
+        | _ -> failwith "Unreachable"
+    in
+    let entry = Meta.lookup meta in
+    go (List.rev entry.context) left right
 
 and unify_tp
     ~env:(env : env) ~size:(size : int) ~mode:(mode : mode)
@@ -598,7 +616,7 @@ and check ~env:(env : env) ~size:(size : int) ~tp:(tp : Domain.t) ~term:(term : 
             | None -> ()
         in
         let (var, new_env) = add_var ~size ~mode ~mu ~tp:dom env in
-        let sem_cod = Nbe.do_clos cod var in
+        let sem_cod = Nbe.do_clos' cod var in
         let t' = check ~env:new_env ~size:(size + 1) ~tp:sem_cod ~term:t ~mode in
         Lam t'
 
@@ -619,7 +637,7 @@ and check ~env:(env : env) ~size:(size : int) ~tp:(tp : Domain.t) ~term:(term : 
     | Pair (fst, snd), Sig (fst_tp, snd_clos) ->
         let sem_env = env_to_sem_env env in
         let fst' = check ~env ~size ~tp:fst_tp ~term:fst ~mode in
-        let sem_fst = Nbe.eval fst' sem_env in
+        let sem_fst = lazy (Nbe.eval fst' sem_env) in
         let snd_tp = Nbe.do_clos snd_clos sem_fst in
         let snd' = check ~env ~size ~tp:snd_tp ~term:snd ~mode in
         Pair (fst', snd')
@@ -749,7 +767,7 @@ and infer
                     (unify_tp ~env ~size ~mode);
                 snd_clos
         in
-        let fst = Nbe.eval (Fst p') sem_env in
+        let fst = lazy (Nbe.eval (Fst p') sem_env) in
         (Nbe.do_clos snd_clos fst, Snd p')
 
     | Ap (mu, fn, arg) ->
@@ -784,7 +802,7 @@ and infer
         (* Printf.printf "checked argument\n%!"; *)
         let _ = Nbe.eval arg' sem_env in
         (* Printf.printf "evaluated argument\n%!"; *)
-        (Nbe.do_clos cod_clos (Nbe.eval arg' sem_env), Ap (mu, fn', arg'))
+        (Nbe.do_clos cod_clos (lazy (Nbe.eval arg' sem_env)), Ap (mu, fn', arg'))
 
     | Lam (mu, body) ->
         let mu = match mu with
@@ -862,11 +880,11 @@ and infer
         (* Elaborate the body *)
         let (body_var, body_env) =
             add_var ~size ~mode ~mu:(MT.compm (x.mod1, x.mod2)) ~tp:inner_tp env in
-        let body_tp = Nbe.do_clos motive_clos (Mod (x.mod2, body_var)) in
+        let body_tp = Nbe.do_clos' motive_clos (Mod (x.mod2, body_var)) in
         let body =
             check ~env:body_env ~size:(size + 1) ~tp:body_tp ~term:x.body ~mode in
 
-        ( Nbe.do_clos motive_clos (Nbe.eval scr sem_env)
+        ( Nbe.do_clos motive_clos (lazy (Nbe.eval scr sem_env))
         , S.Letmod (x.mod1, x.mod2, motive, body, scr))
 
     | J j ->
@@ -890,14 +908,16 @@ and infer
             add_var ~size ~mode ~mu:MT.idm ~tp:inner_tp env in
         let refl_tp =
             Nbe.eval motive
-                (D.Val (D.Refl refl_var) :: D.Val refl_var
-                    :: D.Val refl_var :: sem_env)
+                (D.Val (Lazy.from_val @@ D.Refl refl_var)
+                    :: D.Val (Lazy.from_val @@ refl_var)
+                    :: D.Val (Lazy.from_val refl_var) :: sem_env)
         in
         let refl =
             check ~env:refl_env ~size:(size + 1) ~tp:refl_tp ~term:j.refl ~mode in
 
         let tp = Nbe.eval motive
-            (D.Val (Nbe.eval eq sem_env) :: D.Val right :: D.Val left :: sem_env) in
+            (D.Val (lazy (Nbe.eval eq sem_env)) :: D.Val (Lazy.from_val right)
+                :: D.Val (Lazy.from_val left) :: sem_env) in
         (tp, J (motive, refl, eq))
 
     | Sig (fst, snd) ->
@@ -914,23 +934,23 @@ and infer
         (* Printf.printf "While inferring NRec, got motive %s\n%!" (S.pp mot); *)
         let mot_clos = D.Clos { term = mot; env = sem_env } in
 
-        let zero_tp = Nbe.do_clos mot_clos Zero in
+        let zero_tp = Nbe.do_clos' mot_clos Zero in
         let zero = check ~env ~size ~tp:zero_tp ~term:x.zero ~mode in
 
         let (suc_var1, suc_env) = add_var ~size ~mode ~mu:MT.idm ~tp:Nat env in
-        let mot_var = Nbe.do_clos mot_clos suc_var1 in
+        let mot_var = Nbe.do_clos' mot_clos suc_var1 in
         let (suc_var2, suc_env) =
             add_var ~size:(size + 1) ~mode ~mu:MT.idm ~tp:mot_var suc_env in
 
         (* Printf.printf "about to check suc\n%!"; *)
         let suc = check ~env:suc_env ~size:(size + 2)
-            ~tp:(Nbe.do_clos mot_clos (Suc suc_var1)) ~term:x.suc ~mode in
+            ~tp:(Nbe.do_clos' mot_clos (Suc suc_var1)) ~term:x.suc ~mode in
         (* Printf.printf "  checked suc\n%!"; *)
 
         (* Printf.printf "about to check scr\n%!"; *)
         let scr = check ~env ~size ~tp:Nat ~term:x.scr ~mode in
         (* Printf.printf "  checked scr\n%!"; *)
-        (Nbe.do_clos mot_clos (Nbe.eval scr sem_env), NRec (mot, zero, suc, scr))
+        (Nbe.do_clos mot_clos (lazy (Nbe.eval scr sem_env)), NRec (mot, zero, suc, scr))
 
     | _ ->
         Printf.eprintf "Unhandled infer term: %s\n" (show_preterm term);

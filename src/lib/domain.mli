@@ -1,7 +1,7 @@
 open Mode_theory
 
 type envhead =
-  | Val of t
+  | Val of t Lazy.t
   | M of m
 and env = envhead list
 and clos = Clos of {term : Syntax.t; env : env}

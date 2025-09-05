@@ -86,3 +86,9 @@ let tail : (A : U<0>) -> (Str A) -> Str A @ S =
     fun A xs ->
         letmod idm mod g (xs0) <- xs at _ -> Str A in
         compgl _ (mod g (snd (unconsT _ xs0)))
+
+let tail' : (A : U<0>) -> (Str A) -> Str A @ S =
+    fun A xs ->
+        letmod idm mod g (xs0) <- xs at _ -> Str A in
+        letmod g mod l (xs1) <- snd (unconsT _ xs0) at _ -> Str A in
+        mod g xs1

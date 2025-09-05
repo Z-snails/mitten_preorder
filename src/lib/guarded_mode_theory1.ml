@@ -27,6 +27,7 @@ type m_constr =
 (* In particular: [m1 :: m2 :: m3 ...] is parsed as m3 o m2 o m1, this turns out this way because of the binding routine*)
 
 (** A modality *)
+(* Snoc list *)
 type m = m_constr list
 
 let equal_m mu nu =
@@ -151,11 +152,12 @@ let m_constr_sexp mu =
   | Box -> Sexp.Atom "box"
 
 let mod_to_sexp mu =
-  let rec rec_helper mu =
-    match List.rev mu with
-    | [] -> []
-    | mu :: tail -> m_constr_sexp mu :: rec_helper tail in
-  Sexp.List (rec_helper mu)
+  (* let rec rec_helper mu = *)
+  (*   match List.rev mu with *)
+  (*   | [] -> [] *)
+  (*   | mu :: tail -> m_constr_sexp mu :: rec_helper tail in *)
+  (* Sexp.List (rec_helper mu) *)
+  Sexp.List (List.rev_map m_constr_sexp mu)
 
 let mod_pp mu = mod_to_sexp mu |> Sexp.to_string_hum
 

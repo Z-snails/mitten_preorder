@@ -45,8 +45,8 @@ module Check_env = struct
     let env_to_sem_env : env -> Domain.env =
         List.map
             (function
-            | TopLevel {term; _} -> D.Val term
-            | Term {term; mu = _; tp = _} -> D.Val term
+            | TopLevel {term; _} -> D.Val (Lazy.from_val term)
+            | Term {term; mu = _; tp = _} -> D.Val (Lazy.from_val term)
             | M mu -> D.M mu)
 end
 
