@@ -233,7 +233,7 @@ let print_unsolved_holes (_ : env) =
     assert (size = e.size);
     print_endline "====================";
     Printf.printf "%s : %s\n\n" (Syntax.show_metavar m)
-      (pp_domain ~counter ~names e.size e.sem_tp);
+      (Syntax.pp ~counter ~names e.tp);
   in
 
   let unsolved_holes =

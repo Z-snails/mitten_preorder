@@ -62,7 +62,7 @@ type entry = {
     size: int;
     sem_tp: Domain.t;
     tp: Syntax.t;
-    mutable value: (Domain.t * Syntax.t) option;
+    mutable value: Syntax.t option;
     mutable used_by: MetaSet.t (* TODO: use this (see README.md) *)
 }
 
@@ -105,10 +105,10 @@ let fresh_meta_tp ?name:(name : string option) (env : env) (size : int) : Syntax
 let lookup (S.Metavar (m, _)) : entry =
     MetaMap.find m !store
 
-let solve (m : S.metavar) (value : Domain.t) (tm : Syntax.t) : unit =
+let solve (m : S.metavar) (tm : Syntax.t) : unit =
     let e = lookup m in
     assert (Option.is_none e.value);
-    e.value <- Some (value, tm)
+    e.value <- Some tm
 
 let all_metas () : (S.metavar * entry) list =
     List.map (function (m, e) -> (S.Metavar (m, e.name), e)) (MetaMap.bindings !store)
@@ -198,7 +198,7 @@ let remove_solved (env : env) (t : Syntax.t) : Syntax.t =
             (*     try go env t with e -> Printf.printf "  failed in term %s\n%!" (S.pp t); raise e) sub; *)
             let entry = lookup m in
             let res = match entry.value with
-                | Some (_, v) -> go env (subst sub v)
+                | Some v -> go env (subst sub v)
                 | None -> S.Meta (m, List.map (go env) sub)
             in
             (* Printf.printf "  remove_soved %s solved to\n%s\n%!" (S.show_metavar m) (S.pp res); *)

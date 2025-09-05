@@ -175,7 +175,7 @@ and eval t (env : D.env) =
     (*   (String.concat "\n" *)
     (*     (List.map (function lazy (D.Normal { term }) -> Domain.show term) sp1)); *)
     match e.value with
-    | Some (_, v) -> eval v (create_env m (eval_sub ~env sub))
+    | Some v -> eval v (create_env m (eval_sub ~env sub))
     | None ->
       let tp_sub = eval_tp_sub sub ~env ~size ~meta:m in
       D.Neutral
@@ -201,6 +201,8 @@ and eval_tp_sub
        according to the substitution we have created so far *)
     | (t :: sp'), (Term { tp } :: ctx') ->
       let sem_t = lazy (eval t env) in
+      (* Most terms in the spine are ignored, so this lets us avoid evaluating
+         them and also avoid having to do substitutions to compute the types *)
       lazy (D.Normal { tp = subst (sub, size - msize) tp; term = Lazy.force sem_t })
         :: go sp' ctx' (List.append sub [sem_t]) (msize + 1)
 
@@ -311,7 +313,7 @@ let rec force (size : int) (t : Domain.t) : Domain.t =
       let entry = Meta.lookup m in
       match entry.value with
       | None -> Neutral { tp = force size tp; term }
-      | Some (_, v) ->
+      | Some v ->
         Printf.printf "forcing %s\n%!" (Syn.show_metavar m);
         let env = create_env m (D.untp_sub sub) in
         force size (do_spine spine (eval v env))

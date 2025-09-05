@@ -375,9 +375,7 @@ let solve
     (* Now add lambdas *)
     let sol = lams spine inner in
     Printf.printf "Solved %s as %s\n\n%!" (S.show_metavar meta) (S.pp sol);
-    let sem_sol = Nbe.eval sol (env_to_sem_env entry.context) in
-    (* Printf.printf "  | %s\n" (Domain.show sem_sol); *)
-    Meta.solve meta sem_sol sol
+    Meta.solve meta sol
 
 let rec unify
     ~env:(env : env) ~size:(size : int) ~tp:(tp : Domain.t) ~mode:(mode : mode)
@@ -643,7 +641,8 @@ and check ~env:(env : env) ~size:(size : int) ~tp:(tp : Domain.t) ~term:(term : 
         Pair (fst', snd')
 
     (* TODO: this doesn't work since if the scrutinee is a variable then it
-       appears in the context of the metavariable in the motive twice *)
+       appears in the context of the metavariable in the motive twice. Pruning
+       would solve this in for non-dependent motives *)
     (* This is effectively the same as the infer case, howevever this allows us
        to unify the motive with the expected type first, which lets us solve
        the motive if the scrutinee is a variables *)
