@@ -24,14 +24,14 @@ and gen_do_clos (D.Clos {term; env}) a = eval term (a :: env)
 and do_clos clos a = gen_do_clos clos (D.Val a)
 and do_clos' clos a = do_clos clos (Lazy.from_val a)
 
-and gen_do_clos2 (D.Clos2 {term; env}) a1 a2 = eval term ( a2 :: a1 :: env)
+and gen_do_clos2 (D.Clos2 {term; env}) a1 a2 = eval term (a2 :: a1 :: env)
 and do_clos2 clos a1 a2 = gen_do_clos2 clos (Val a1) (Val a2)
-and do_clos2' clos a b = do_clos2 clos (Lazy.from_val a) (Lazy.from_val b)
+and do_clos2' clos a1 a2 = do_clos2 clos (Lazy.from_val a1) (Lazy.from_val a2)
 
 and gen_do_clos3 (D.Clos3 {term; env}) a1 a2 a3 = eval term (a3 :: a2 :: a1 :: env)
 and do_clos3 clos a1 a2 a3 = gen_do_clos3 clos (Val a1) (Val a2) (Val a3)
-and do_clos3' clos a b c =
-  do_clos3 clos (Lazy.from_val a) (Lazy.from_val b) (Lazy.from_val c)
+and do_clos3' clos a1 a2 a3 =
+  do_clos3 clos (Lazy.from_val a1) (Lazy.from_val a2) (Lazy.from_val a3)
 
 (* TODO: all eliminators should use force: see test/03-holes.tt for tests *)
 (* Or: be very careful to call force before calling do_<elim> *)
@@ -311,14 +311,10 @@ let rec force (size : int) (t : Domain.t) : Domain.t =
       let entry = Meta.lookup m in
       match entry.value with
       | None -> Neutral { tp = force size tp; term }
-      (* force using eval? *)
-      (* | Some (v, _) -> *)
-      (*   let v' = subst (D.untp_sub sub, off) v in *)
-      (*   force size (do_spine spine v') *)
       | Some (_, v) ->
         Printf.printf "forcing %s\n%!" (Syn.show_metavar m);
         let env = create_env m (D.untp_sub sub) in
-        force size (eval v env)
+        force size (do_spine spine (eval v env))
     end
   | _ -> t
 

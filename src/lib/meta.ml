@@ -66,7 +66,7 @@ type entry = {
     mutable used_by: MetaSet.t (* TODO: use this (see README.md) *)
 }
 
-let next_meta : int ref = ref 0
+let next_meta : int ref = ref 1
 (* Ideally should be a dynamically sized array *)
 let store : entry map ref = ref MetaMap.empty
 

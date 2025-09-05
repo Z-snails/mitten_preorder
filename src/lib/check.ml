@@ -34,11 +34,13 @@ exception Type_error of error
 let tp_error e = raise (Type_error e)
 
 let assert_subtype m size t1 t2 term =
-  if Nbe.check_tp m ~subtype:false size t1 t2
+  if Nbe.check_tp m ~subtype:true size t1 t2
   then ()
   else
-    (Printf.printf "About to readback %s\nand\n%s\n" (Domain.show t1) (Domain.show t2);
-    tp_error (Type_mismatch (Nbe.read_back_tp size t1, Nbe.read_back_tp size t2, term)))
+    begin
+      (* Printf.printf "About to readback %s\nand\n%s\n" (Domain.show t1) (Domain.show t2); *)
+      tp_error (Type_mismatch (Nbe.read_back_tp size t1, Nbe.read_back_tp size t2, term))
+    end
 
 let assert_equal m size t1 t2 tp =
   let nf1 = D.Normal {tp; term = t1} in
@@ -46,8 +48,12 @@ let assert_equal m size t1 t2 tp =
   if Nbe.check_nf m size nf1 nf2
   then ()
   else
-    (Printf.printf "About to readback %s\nand\n%s\n" (Domain.show t1) (Domain.show t2);
-    tp_error (Term_or_Type_mismatch (Nbe.read_back_nf size nf1, Nbe.read_back_nf size nf2)))
+    begin
+      (* Printf.printf "About to readback %s\nand\n%s\nat type\n%s\n" (Domain.show t1) (Domain.show t2) (Domain.show tp); *)
+      tp_error (Term_or_Type_mismatch
+          ( Nbe.read_back_nf size (Nbe.force_nf size nf1)
+          , Nbe.read_back_nf size (Nbe.force_nf size nf2)))
+    end
 
 let check_mode m n tm =
   match eq_mode m n with

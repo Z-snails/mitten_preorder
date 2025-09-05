@@ -30,5 +30,6 @@ val do_snd : Domain.t -> Domain.t
 
 val subst : Domain.sub * int -> Domain.t -> Domain.t
 val force : int -> Domain.t -> Domain.t
+val force_nf : int -> Domain.nf -> Domain.nf
 val create_env : Syntax.metavar -> Domain.sub -> Domain.env
 val eval_sub : env:Domain.env -> Syntax.t list -> Domain.sub
