@@ -9,10 +9,11 @@ let create_env (meta : Syn.metavar) (sub : D.sub) =
   let rec go (ctx : Meta.Check_env.env) (sub : D.sub) =
     match ctx, sub with
     | [], [] -> []
-    | TopLevel { term } :: ctx', _ :: sub' -> D.Val (Lazy.from_val term) :: go ctx' sub'
+    | TopLevel { term } :: ctx', _ :: sub' ->
+      D.Val (Lazy.from_val term) :: go ctx' sub'
     | Term _ :: ctx', t :: sub' ->
       D.Val t :: go ctx' sub'
-    | M mu :: ctx', sub' -> D.M mu :: go ctx' sub'
+    | M mu :: ctx', _ -> D.M mu :: go ctx' sub
     | _ -> failwith "Unreachable"
   in
   go (Meta.lookup meta).context (List.rev sub)
@@ -71,7 +72,7 @@ and do_snd p =
 
 and do_ap f a =
   match f with
-  | D.Lam clos -> do_clos clos a
+  | D.Lam (_, clos) -> do_clos clos a
   | D.Neutral {tp; term = e} ->
     begin
       match tp with
@@ -139,7 +140,7 @@ and eval t (env : D.env) =
       (eval n env)
   | Syn.Pi (mu, src, dest) ->
     D.Pi (mu, (eval src (D.M mu :: env)), (Clos {term = dest; env}))
-  | Syn.Lam t -> D.Lam (Clos {term = t; env})
+  | Syn.Lam (mu, t) -> D.Lam (mu, Clos {term = t; env})
   | Syn.Ap (mu, t1, t2) -> do_ap (eval t1 env) (lazy (eval t2 (D.M mu :: env)))
   | Syn.Uni i -> D.Uni i
   | Syn.Sig (t1, t2) -> D.Sig (eval t1 env, (Clos {term = t2; env}))
@@ -257,7 +258,7 @@ and subst_nf (sub : D.sub * int) (Normal { tp; term } : D.nf) : D.nf =
 (* TODO: replace this with read_back |> eval? *)
 (* TODO: elab-zoo has Domain.t -> Syntax.t *)
 and subst (sub : D.sub * int) (t : Domain.t) : Domain.t = match t with
-    | D.Lam clos -> D.Lam (subst_clos sub clos)
+    | D.Lam (mu, clos) -> D.Lam (mu, subst_clos sub clos)
     | D.Neutral { tp; term } -> subst_ne sub tp term
     | D.Nat -> D.Nat
     | D.Zero -> D.Zero
@@ -314,7 +315,6 @@ let rec force (size : int) (t : Domain.t) : Domain.t =
       match entry.value with
       | None -> Neutral { tp = force size tp; term }
       | Some v ->
-        Printf.printf "forcing %s\n%!" (Syn.show_metavar m);
         let env = create_env m (D.untp_sub sub) in
         force size (do_spine spine (eval v env))
     end
@@ -327,13 +327,13 @@ let force_nf (size : int) (Normal t : Domain.nf) : Domain.nf =
 let rec read_back_nf size (D.Normal { tp; term = v }) =
   (* Functions *)
   match force size tp with
-  | Pi (_, src, dest) ->
+  | Pi (mu, src, dest) ->
     let arg = D.mk_var src size in
     let nf =
       D.Normal
         { tp = do_clos' dest arg
         ; term = do_ap v (Lazy.from_val arg) } in
-    Syn.Lam (read_back_nf (size + 1) nf)
+    Syn.Lam (mu, read_back_nf (size + 1) nf)
   (* Pairs *)
   | D.Sig (fst, snd) ->
     let fst' = do_fst v in
@@ -380,12 +380,13 @@ let rec read_back_nf size (D.Normal { tp; term = v }) =
       | D.Neutral {term = ne; _} -> read_back_ne size ne
       | _ -> raise (Nbe_failed ("element of universe expected in read_back_nf\n False term: "))
     end
-  | D.Neutral _ as tp ->
+  | D.Neutral _ ->
     begin
       match force size v with
       | D.Neutral {term = ne; _} -> read_back_ne size ne
       | v ->
-        Printf.printf "Whoopsies, unexpected term: %s\n  at type: %s\n" (Domain.show v) (Domain.show tp);
+        (* Printf.printf "Whoopsies, unexpected term: %s\n  at type: %s\n" *)
+        (*   (Domain.show v) (Domain.show tp); *)
         raise (Nbe_failed "Neutral expected for Neutral Type in read_back_nf")
     end
   (* Id *)

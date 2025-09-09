@@ -26,7 +26,7 @@ let ap : (A : {l | U<0>}) -> (B : {l | U<0>}) -> << l | A -> B >> -> << l | A >>
 axiom lob : (A : _) -> ({ l | A } -> A) -> A @ T
 
 let Str' : U<0> -> U<0> @ T =
-    fun A -> lob _ (fun tail -> A * << l | tail >>)
+    fun A -> lob ?motive (fun tail -> A * << l | tail >>)
 
 ; let infer_mot : (A : _) -> << l | A >> -> << l | A >> @ T =
 ;     fun _ x ->

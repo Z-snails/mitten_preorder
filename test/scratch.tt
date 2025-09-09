@@ -1,0 +1,168 @@
+
+
+let transp_inv : (A : U<0>) -> (B : U<0>) -> (Id _ A B) -> B -> A @ T =
+    fun _ _ eq -> match eq at a b _ -> (b -> a) with
+        | refl _ -> fun x -> x
+
+;; Loeb induction
+
+axiom lob1 : ({l | U<0>} -> U<0>) -> U<0> @ T
+axiom lob1Beta : (f : {l | U<0>} -> U<0>) -> Id _ (lob1 f) (f (lob1 f)) @ T
+
+;; Streams
+let StrRec : {d | U<0>} -> {l | U<0>} -> U<0> @ T =
+    fun A x -> << d | A >> * << l | x >>
+
+let StrT : {d | U<0>} -> U<0> @ T =
+    fun A -> lob1 (StrRec A)
+
+;quit
+
+;; pair (x, xs) but uses lob1Beta to make that type check
+let consT
+    : (A : {d | U<0>}) -> << d | A >> -> << l | StrT A >> -> StrT A @ T
+    = fun A x xs ->
+        transp_inv ?cons1 ?cons2 (lob1Beta (StrRec ?cons3)) (pair (x, xs))
+
+
+quit
+
+
+let triv_S : (A : U<0>) -> << idm | A >> -> A @ S =
+    fun A x -> letmod idm mod idm (y) <- x at _ -> A in y
+
+
+let comp_g-d : (A : U<0>) -> << g | << d | A >> >> -> A @ S =
+    fun A x -> letmod idm mod g (y) <- x at _ -> A in
+               letmod g mod d (z) <- y at _ -> A in
+               triv_S A (mod (g . d) z)
+
+let comp_g-l : (A : { g | U<0>}) -> << g | << l | A >> >> -> << g | A >> @ S =
+    fun A x -> letmod idm mod g (y) <- x at _ -> << g | A >> in
+               letmod g mod l (z) <- y at _ -> << g | A >> in
+               mod (g . l) z
+
+
+
+
+axiom lob : (A : U<0>) -> ({l | A} -> A) -> A @ T
+axiom lob1 : ({l | U<0>} -> U<0>) -> U<0> @ T
+axiom lob_beta :
+  (A : U<0>) ->
+  (f : {l | A} -> A) ->
+  Id A (lob A f) (f {l, lob A f})
+  @ T
+axiom lob1_beta :
+  (f : {l | U<0>} -> U<0>) ->
+  Id U<0> (lob1 f) (f {l, lob1 f})
+  @ T
+
+let transport1 : (A : U<0>) -> (B : U<0>) -> (Id U<0> A B) -> A -> B @ T =
+    fun A B eq ->
+        match eq at x y p -> x -> y with
+        | refl z -> fun x -> x
+
+
+let gstream : (A : U<0>) -> U<0> @ T =
+    fun A -> lob1 (fun x ->  A * << l | x >>)
+
+let gstream_fun : (A : U<0>) -> {l | U<0>} -> U<0> @ T =
+   fun A s ->  A * << l | s >>
+
+
+let unfold : (A : U<0>) -> (gstream A) -> A * << l | gstream A >>
+     @ T =
+    fun A str ->
+        transport1
+            (gstream A)
+            (A * << l | gstream A >>)
+            (lob1_beta (gstream_fun A))
+            str
+
+
+
+
+let ghead : (A : U<0>) -> (gstream A) -> A @ T =
+    fun A lst -> fst (unfold A lst)
+
+let gtail : (A : U<0>) -> (gstream A) -> << l | gstream A >> @ T =
+    fun A str -> snd (unfold A str)
+
+
+
+let NatD : U<0> @ T = << d | Nat >>
+
+let stream : (A : U<0>) -> U<0> @ S =
+    fun A -> << g | gstream << d | A >> >>
+
+let head : (A : U<0>) -> (stream A) -> A @ S =
+    fun A str -> letmod idm mod g (gstr) <- str at _ -> A in
+                 comp_g-d A (mod g (ghead (<< d | A >>) gstr))
+
+let tail : (A : U<0>) -> (stream A) -> stream A @ S =
+    fun A str -> letmod idm mod g (gstr) <- str at _ -> stream A in
+                 comp_g-l
+                    {g, (gstream << d | A >>)}
+                    (mod g (gtail (<< d | A >>) gstr))
+
+
+
+let nth : Nat -> (stream Nat) -> Nat @ S =
+    fun n ->
+    rec n at _ -> (stream Nat) -> Nat with
+    | zero -> (fun str -> head Nat str)
+    | suc _, p -> (fun str -> p (tail Nat str))
+
+
+
+
+; let transport1 : (A : U<0>) -> (B : U<0>) -> (Id U<0> A B) -> A -> B @ T =
+;     fun A B eq ->
+;         match eq at x y p -> x -> y with
+;         | refl z -> fun x -> x
+; 
+; let transport1_inv : (A : U<0>) -> (B : U<0>) -> (Id U<0> A B) -> B -> A @ T =
+;     fun A B eq ->
+;         match eq at x y p -> y -> x with
+;         | refl z -> fun x -> x
+; 
+; 
+; let trans_eq :
+;     (A : U<0>) -> (B : U<0>) -> (eq : Id U<0> A B) ->
+;     Id (A -> A)
+;         (fun a -> transport1_inv A B eq (transport1 A B eq a))
+;         (fun a -> a) @ T =
+;     fun A B eq ->
+;     match eq at x y p ->
+;         Id (x -> x)
+;             (fun a -> transport1_inv x y p (transport1 x y p a))
+;             (fun a -> a) with
+;     | refl z -> refl (fun {idm, x} -> x)
+; 
+; 
+; axiom add : Nat -> Nat -> Nat @ S
+; 
+; let ap : (A : _) -> (B : _) -> << l | A -> B >> -> << l | A >> -> << l | B >> @ T =
+;     fun A B f x ->
+;         letmod idm mod l(f0) <- f at _ -> << l | B >> in
+;         letmod idm mod l(x0) <- x at _ -> << l | B >> in
+;         mod l(f0 x0)
+; 
+; let DNat : _ @ T = << d | Nat >>
+; 
+; let addT : DNat -> DNat -> DNat @ T =
+;     fun x y ->
+;         letmod idm mod d(x0) <- x at _ -> DNat in
+;         letmod idm mod d(y0) <- y at _ -> DNat in
+;         mod d(add x0 y0)
+; 
+; axiom lob : (A : _) -> ({ l | A } -> A) -> A @ T
+; 
+; let Str' : U<0> -> U<0> @ T =
+;     fun A -> lob _ (fun tail -> A * << l | tail >>)
+; 
+; let Str : U<0> -> U<0> @ S =
+;     fun A -> << g | Str' << d | A >> >>
+; 
+; 
+; 

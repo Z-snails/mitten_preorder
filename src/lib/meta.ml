@@ -48,6 +48,12 @@ module Check_env = struct
             | TopLevel {term; _} -> D.Val (Lazy.from_val term)
             | Term {term; mu = _; tp = _} -> D.Val (Lazy.from_val term)
             | M mu -> D.M mu)
+
+    let rec locks (env : env) : m =
+        match env with
+        | [] -> idm
+        | M mu :: env' -> compm (mu, locks env')
+        | _ :: env' -> locks env'
 end
 
 open Check_env
@@ -137,7 +143,7 @@ let weaken_tm ~amount:(amount : int) (tm : Syntax.t) : Syntax.t =
         | S.NRec (motive, zero, suc, n) ->
             S.NRec (go (c + 1) motive, go c zero, go (c + 1) suc, go c n)
         | S.Pi (mu, dom, cod) -> S.Pi (mu, go c dom, go (c + 1) cod)
-        | S.Lam t -> S.Lam (go (c + 1) t)
+        | S.Lam (mu, t) -> S.Lam (mu, go (c + 1) t)
         | S.Ap (mu, f, x) -> S.Ap (mu, go c f, go c x)
         | S.Sig (l, r) -> S.Sig (go c l, go (c + 1) r)
         | S.Pair (l, r) -> S.Pair (go c l, go c r)
@@ -173,7 +179,7 @@ let remove_solved (env : env) (t : Syntax.t) : Syntax.t =
         | S.NRec (motive, zero, suc, n) ->
             S.NRec (go (weaken env) motive, go env zero, go (weaken_n env 2) suc, go env n)
         | S.Pi (mu, dom, cod) -> S.Pi (mu, go env dom, go (weaken env) cod)
-        | S.Lam t -> S.Lam (go (weaken env) t)
+        | S.Lam (mu, t) -> S.Lam (mu, go (weaken env) t)
         | S.Ap (mu, f, x) -> S.Ap (mu, go env f, go env x)
         | S.Sig (l, r) -> S.Sig (go env l, go (weaken env) r)
         | S.Pair (l, r) -> S.Pair (go env l, go env r)

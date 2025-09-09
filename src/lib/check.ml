@@ -95,14 +95,17 @@ let rec check ~env ~size ~term ~tp ~m =
     let l_sem = Nbe.eval l (env_to_sem_env new_env) in
     let var = D.mk_var l_sem size in
     check ~env:(add_term ~md:new_mode ~term:var ~mu:mu ~tp:l_sem env) ~size ~term:r ~tp ~m
-  | Syn.Lam f ->
+  | Syn.Lam (mu, f) ->
     begin
       match Nbe.force size tp with
-      | D.Pi (mu, src , dest) ->
+      | D.Pi (nu, src , dest) as tp ->
+        check_mod mu nu term (Nbe.read_back_tp size tp);
         let new_mode = dom_mod mu m in
         let var = D.mk_var src size in
         let dest_tp = Nbe.do_clos' dest var in
-        check ~env:(add_term ~md:new_mode ~term:var ~tp:src ~mu:mu env) ~size:(size + 1) ~term:f ~tp:dest_tp ~m ;
+        check
+          ~env:(add_term ~md:new_mode ~term:var ~tp:src ~mu:mu env)
+          ~size:(size + 1) ~term:f ~tp:dest_tp ~m ;
       | t -> tp_error (Misc ("Expecting Pi but found\n" ^ d_pp size t))
     end
   | Syn.Pair (left, right) ->

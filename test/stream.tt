@@ -8,7 +8,7 @@ let inv1 : (A : U<0>) -> (B : U<0>) -> (Id _ A B) -> Id _ B A @ T =
         | refl c -> refl c
 
 let transp_inv : (A : U<0>) -> (B : U<0>) -> (Id _ A B) -> B -> A @ T =
-    fun A B eq y -> transp _ _ (inv1 A B eq) y
+    fun A B eq y -> transp _ _ (inv1 _ _ eq) y
 
 let next : (A : U<0>) -> A -> << l | A >> @ T =
     fun A x -> mod l x

@@ -16,7 +16,7 @@ and clos = Clos of {term : Syntax.t [@printer pp_syntax]; env : env [@opaque]} [
 and clos2 = Clos2 of {term : Syntax.t [@printer pp_syntax]; env : env [@opaque]} [@@deriving show]
 and clos3 = Clos3 of {term : Syntax.t [@printer pp_syntax]; env : env [@opaque]} [@@deriving show]
 and t =
-  | Lam of clos
+  | Lam of m * clos
   | Neutral of { tp : t [@opaque]; term : ne }
   | Nat
   | Zero

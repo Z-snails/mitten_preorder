@@ -8,7 +8,7 @@ and clos = Clos of {term : Syntax.t; env : env}
 and clos2 = Clos2 of {term : Syntax.t; env : env}
 and clos3 = Clos3 of {term : Syntax.t; env : env}
 and t =
-  | Lam of clos
+  | Lam of m * clos
   | Neutral of {tp : t; term : ne}
   | Nat
   | Zero

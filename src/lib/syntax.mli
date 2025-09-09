@@ -14,7 +14,7 @@ and t =
   | Var of int (* DeBruijn indices for variables *)
   | Let of t * (* BINDS *) t | Check of t * t
   | Nat | Zero | Suc of t | NRec of (* BINDS *) t * t * (* BINDS 2 *) t * t
-  | Pi of m * t * (* BINDS *) t | Lam of (* BINDS *) t | Ap of m * t * t
+  | Pi of m * t * (* BINDS *) t | Lam of m * (* BINDS *) t | Ap of m * t * t
   | Sig of t * (* BINDS *) t | Pair of t * t | Fst of t | Snd of t
   | Id of t * t * t | Refl of t | J of (* BINDS 3 *) t * (* BINDS *) t * t
   | Uni of uni_level

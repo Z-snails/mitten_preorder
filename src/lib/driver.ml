@@ -1,6 +1,7 @@
 module CS = Concrete_syntax
 module D = Domain
 module E = Elab
+module U = Unify
 module M = Mode_theory
 module S = Syntax
 module Check_env = Meta.Check_env
@@ -42,71 +43,71 @@ let find_idx key =
   go 0
 
 let rec int_to_term = function
-  | 0 -> E.Zero
-  | n -> E.Suc (int_to_term (n - 1))
+  | 0 -> U.Zero
+  | n -> U.Suc (int_to_term (n - 1))
 
 let rec unravel_spine f = function
   | [] -> f
   | x :: xs -> unravel_spine (x f) xs
 
-let rec bind (env : string list) : Concrete_syntax.t -> Elab.preterm = function
-  | CS.Var i -> E.Var (find_idx i env)
+let rec bind (env : string list) : Concrete_syntax.t -> U.preterm = function
+  | CS.Var i -> U.Var (find_idx i env)
   | CS.Let (tp, Binder {name; body}) ->
-    E.Let (bind env tp, bind (name :: env) body)
-  | CS.Check {term; tp} -> E.Check (bind env term, bind env tp)
-  | CS.Nat -> E.Nat
-  | CS.Suc t -> E.Suc (bind env t)
+    U.Let (bind env tp, bind (name :: env) body)
+  | CS.Check {term; tp} -> U.Check (bind env term, bind env tp)
+  | CS.Nat -> U.Nat
+  | CS.Suc t -> U.Suc (bind env t)
   | CS.Lit i -> int_to_term i
   | CS.NRec
       { mot = Binder {name = mot_name; body = mot_body};
         zero;
         suc = Binder2 {name1 = suc_name1; name2 = suc_name2; body = suc_body};
         nat } ->
-    E.NRec {
+    U.NRec {
       motive = bind (mot_name :: env) mot_body;
       zero = bind env zero;
       suc = bind (suc_name2 :: suc_name1 :: env) suc_body;
       scr = bind env nat
     }
   | CS.Pi (mu, src, Binder {name; body}) ->
-    E.Pi (M.bind_m mu, bind env src, bind (name :: env) body)
+    U.Pi (M.bind_m mu, bind env src, bind (name :: env) body)
   | CS.Lam (BinderN {names = []; body}) ->
     bind env body
   | CS.Lam (BinderN {names = (mu, x) :: names; body}) ->
     let lam = CS.Lam (BinderN {names; body}) in
-    E.Lam (Option.map M.bind_m mu, bind (x :: env) lam)
+    U.Lam (Option.map M.bind_m mu, bind (x :: env) lam)
   | CS.Ap (f, args) ->
     List.map
-      (fun (mu, t) f -> E.Ap (Option.map M.bind_m mu, f, bind env t)) args
+      (fun (mu, t) f -> U.Ap (Option.map M.bind_m mu, f, bind env t)) args
     |> unravel_spine (bind env f)
   | CS.Sig (tp, Binder {name; body}) ->
-    E.Sig (bind env tp, bind (name :: env) body)
-  | CS.Pair (l, r) -> E.Pair (bind env l, bind env r)
-  | CS.Fst p -> E.Fst (bind env p)
-  | CS.Snd p -> E.Snd (bind env p)
+    U.Sig (bind env tp, bind (name :: env) body)
+  | CS.Pair (l, r) -> U.Pair (bind env l, bind env r)
+  | CS.Fst p -> U.Fst (bind env p)
+  | CS.Snd p -> U.Snd (bind env p)
   | CS.J
       { mot = Binder3 {name1 = left; name2 = right; name3 = prf; body = mot_body};
        refl = Binder {name = refl_name; body = refl_body};
        eq } ->
-    E.J {
+    U.J {
       motive = bind (prf :: right :: left :: env) mot_body;
       refl = bind (refl_name :: env) refl_body;
       eq = bind env eq;
     }
   | CS.Id (tp, left, right) ->
-    E.Id (bind env tp, bind env left, bind env right)
-  | CS.Refl t -> E.Refl (bind env t)
-  | CS.Uni i -> E.Uni ()
-  | CS.TyMod (mu, tp) -> E.TyMod (M.bind_m mu, bind env tp)
-  | CS.Mod (mu, tp) -> E.Mod (M.bind_m mu, bind env tp)
+    U.Id (bind env tp, bind env left, bind env right)
+  | CS.Refl t -> U.Refl (bind env t)
+  | CS.Uni i -> U.Uni ()
+  | CS.TyMod (mu, tp) -> U.TyMod (M.bind_m mu, bind env tp)
+  | CS.Mod (mu, tp) -> U.Mod (M.bind_m mu, bind env tp)
   | CS.Letmod (mu, nu, Binder {name; body = tp}, Binder {name = mod_var; body}, def) ->
-    E.Letmod {
+    U.Letmod {
       mod1 = M.bind_m mu; mod2 = M.bind_m nu;
       motive = bind (name :: env) tp;
       scrutinee = bind env def;
       body = bind (mod_var :: env) body;
     }
-  | CS.Hole n -> E.Hole n
+  | CS.Hole n -> U.Hole n
 
 let process_decl (Env { size; check_env; bindings })  = function
   | CS.Def { name; def; tp; md } ->
