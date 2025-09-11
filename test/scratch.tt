@@ -1,4 +1,7 @@
 
+let bad : {l | U<0>} -> U<0> @ T = fun x -> ?bad
+; let check_bad : (x : U<0>) -> Id _ (bad x) x @ T = fun x -> refl x
+
 
 let transp_inv : (A : U<0>) -> (B : U<0>) -> (Id _ A B) -> B -> A @ T =
     fun _ _ eq -> match eq at a b _ -> (b -> a) with
@@ -16,16 +19,11 @@ let StrRec : {d | U<0>} -> {l | U<0>} -> U<0> @ T =
 let StrT : {d | U<0>} -> U<0> @ T =
     fun A -> lob1 (StrRec A)
 
-;quit
-
 ;; pair (x, xs) but uses lob1Beta to make that type check
 let consT
     : (A : {d | U<0>}) -> << d | A >> -> << l | StrT A >> -> StrT A @ T
     = fun A x xs ->
         transp_inv ?cons1 ?cons2 (lob1Beta (StrRec ?cons3)) (pair (x, xs))
-
-
-quit
 
 
 let triv_S : (A : U<0>) -> << idm | A >> -> A @ S =
@@ -116,53 +114,50 @@ let nth : Nat -> (stream Nat) -> Nat @ S =
 
 
 
-; let transport1 : (A : U<0>) -> (B : U<0>) -> (Id U<0> A B) -> A -> B @ T =
-;     fun A B eq ->
-;         match eq at x y p -> x -> y with
-;         | refl z -> fun x -> x
-; 
-; let transport1_inv : (A : U<0>) -> (B : U<0>) -> (Id U<0> A B) -> B -> A @ T =
-;     fun A B eq ->
-;         match eq at x y p -> y -> x with
-;         | refl z -> fun x -> x
-; 
-; 
-; let trans_eq :
-;     (A : U<0>) -> (B : U<0>) -> (eq : Id U<0> A B) ->
-;     Id (A -> A)
-;         (fun a -> transport1_inv A B eq (transport1 A B eq a))
-;         (fun a -> a) @ T =
-;     fun A B eq ->
-;     match eq at x y p ->
-;         Id (x -> x)
-;             (fun a -> transport1_inv x y p (transport1 x y p a))
-;             (fun a -> a) with
-;     | refl z -> refl (fun {idm, x} -> x)
-; 
-; 
-; axiom add : Nat -> Nat -> Nat @ S
-; 
-; let ap : (A : _) -> (B : _) -> << l | A -> B >> -> << l | A >> -> << l | B >> @ T =
-;     fun A B f x ->
-;         letmod idm mod l(f0) <- f at _ -> << l | B >> in
-;         letmod idm mod l(x0) <- x at _ -> << l | B >> in
-;         mod l(f0 x0)
-; 
-; let DNat : _ @ T = << d | Nat >>
-; 
-; let addT : DNat -> DNat -> DNat @ T =
-;     fun x y ->
-;         letmod idm mod d(x0) <- x at _ -> DNat in
-;         letmod idm mod d(y0) <- y at _ -> DNat in
-;         mod d(add x0 y0)
-; 
-; axiom lob : (A : _) -> ({ l | A } -> A) -> A @ T
-; 
-; let Str' : U<0> -> U<0> @ T =
-;     fun A -> lob _ (fun tail -> A * << l | tail >>)
-; 
-; let Str : U<0> -> U<0> @ S =
-;     fun A -> << g | Str' << d | A >> >>
-; 
-; 
-; 
+let transport1 : (A : U<0>) -> (B : U<0>) -> (Id U<0> A B) -> A -> B @ T =
+    fun A B eq ->
+        match eq at x y p -> x -> y with
+        | refl z -> fun x -> x
+
+let transport1_inv : (A : U<0>) -> (B : U<0>) -> (Id U<0> A B) -> B -> A @ T =
+    fun A B eq ->
+        match eq at x y p -> y -> x with
+        | refl z -> fun x -> x
+
+
+let trans_eq :
+    (A : U<0>) -> (B : U<0>) -> (eq : Id U<0> A B) ->
+    Id (A -> A)
+        (fun a -> transport1_inv A B eq (transport1 A B eq a))
+        (fun a -> a) @ T =
+    fun A B eq ->
+    match eq at x y p ->
+        Id (x -> x)
+            (fun a -> transport1_inv x y p (transport1 x y p a))
+            (fun a -> a) with
+    | refl z -> refl (fun {idm, x} -> x)
+
+
+axiom add : Nat -> Nat -> Nat @ S
+
+let ap : (A : _) -> (B : _) -> << l | A -> B >> -> << l | A >> -> << l | B >> @ T =
+    fun A B f x ->
+        letmod idm mod l(f0) <- f at _ -> << l | B >> in
+        letmod idm mod l(x0) <- x at _ -> << l | B >> in
+        mod l(f0 x0)
+
+let DNat : _ @ T = << d | Nat >>
+
+let addT : DNat -> DNat -> DNat @ T =
+    fun x y ->
+        letmod idm mod d(x0) <- x at _ -> DNat in
+        letmod idm mod d(y0) <- y at _ -> DNat in
+        mod d(add x0 y0)
+
+axiom lob : (A : _) -> ({ l | A } -> A) -> A @ T
+
+let Str' : U<0> -> U<0> @ T =
+    fun A -> lob _ (fun tail -> A * << l | tail >>)
+
+let Str : U<0> -> U<0> @ S =
+    fun A -> << g | Str' << d | A >> >>

@@ -82,13 +82,14 @@ type elab_error =
     (*     { prob_mod: modality; prob_lock: modality *)
     (*     ; meta_mod: modality; meta_lock: modality *)
     (*     ; variable: int } *)
-    | Cant_factor_2cell of { lower_bound: modality; in_problem: modality }
+    (* | Cant_factor_2cell of { lower_bound: modality; in_problem: modality; level: int } *)
+    | Inaccessible_in_solution of { mu: modality; locks: modality; var: int }
     | Occurs_check
     | Non_linear of int
     | Escaped_var of int
 
     (* Metadata *)
-    | While_elaborating of Concrete_syntax.ident * elab_error
+    | While_elaborating of Concrete_syntax.ident * int * elab_error
 
 let rec pp_error (e : elab_error) = match e with
     | Mode_mismatch e ->
@@ -135,9 +136,14 @@ let rec pp_error (e : elab_error) = match e with
     (*         e.variable *)
     (*         (MT.mod_pp e.prob_mod) (MT.mod_pp e.prob_lock) *)
     (*         (MT.mod_pp e.meta_mod) (MT.mod_pp e.meta_lock) *)
-    | Cant_factor_2cell e ->
-        Printf.sprintf "Unable to factor modality %s in terms of lower bound %s"
-            (MT.mod_pp e.in_problem) (MT.mod_pp e.lower_bound)
+    (* | Cant_factor_2cell e -> *)
+    (*     Printf.sprintf *)
+    (*         "Unable to factor modality %s of level %d in terms of lower bound %s" *)
+    (*         (MT.mod_pp e.in_problem) e.level (MT.mod_pp e.lower_bound) *)
+    | Inaccessible_in_solution e ->
+        Printf.sprintf
+            "Variable %d is not accessible in the solution: missing 2-cell %s <= %s"
+            e.var (MT.mod_pp e.mu) (MT.mod_pp e.locks)
     | Occurs_check ->
         "Occurs check: Metavariable occurs in the RHS of the unification problem"
     | Non_linear v ->
@@ -146,8 +152,8 @@ let rec pp_error (e : elab_error) = match e with
     | Escaped_var v ->
         (* TODO: print variable name *)
         Printf.sprintf "Escaping variable %d is not bound in the solution" v
-    | While_elaborating (n, e) ->
-        Printf.sprintf "While elaborating %s\n%s" n (pp_error e)
+    | While_elaborating (n, lvl, e) ->
+        Printf.sprintf "While elaborating %s (level %d)\n%s" n lvl (pp_error e)
 
 exception Elab_error of elab_error
 
@@ -170,20 +176,13 @@ let unify_error ?tp left right = elab_error (Unify_error { tp; left; right })
 type pren =
     { dom_size: int
     ; cod_size: int
-    ; map: (int * modality option) IntMap.t
+    ; map: (int * modality) IntMap.t
     ; non_linear: IntSet.t }
 
-let lift (pren : pren) : pren =
-    { dom_size = pren.dom_size + 1
-    ; cod_size = pren.cod_size + 1
-    ; map = IntMap.add pren.cod_size (pren.dom_size, None) pren.map
-    ; non_linear = pren.non_linear
-    }
-
 let show_pren (pren : pren) : string =
-    List.fold_left
-        (fun acc (x, (y, _)) -> Printf.sprintf "%s, %d |-> %d" acc x y)
-        "" (IntMap.bindings pren.map)
+    String.concat ", " (List.map
+        (fun (x, (y, _)) -> Printf.sprintf "%d |-> %d" x y)
+        (IntMap.bindings pren.map))
 
 (** Check a delayed substitution and spine are a partial renaming,
     ie a list of variables, each unlocked by the identity 2-cell.
@@ -197,11 +196,11 @@ let invert
     let assert_res = fun b e -> if b then Ok () else Error e in
 
     (** If a value is a bound variable, then return its de Bruijn index *)
-    let unwrap_var (t : Domain.t) : (int, elab_error) result =
+    let unwrap_var (t : Domain.t) : (modality * int, elab_error) result =
         match Nbe.force prob_size t with
         | Neutral { term = { head = Var lvl; spine = [] } } ->
             begin match nth_tm prob_env (D.lvl_to_ix ~size:prob_size ~lvl) with
-                | Term { defined = false } -> Ok lvl
+                | Term { defined = false; mu } -> Ok (mu, lvl)
                 | Term { defined = true } | TopLevel _ -> Error (Not_renaming (Left t))
                 | M _ -> failwith "Unreachable"
             end
@@ -210,7 +209,7 @@ let invert
 
     (** Add a variable to a partial renaming. If it already exists, then move
         it to the set of non-linear variables *)
-    let add_var ~var ~meta_mod ~prob_lock acc : pren =
+    let add_var ~var ~mu acc : pren =
         if IntMap.mem var acc.map
         then
             { dom_size = acc.dom_size + 1
@@ -218,37 +217,27 @@ let invert
             ; map = IntMap.remove var acc.map
             ; non_linear = IntSet.add var acc.non_linear }
         else { acc with
-            map = IntMap.add var
-                (acc.dom_size, Some (MT.compm (prob_lock, meta_mod))) acc.map;
+            map = IntMap.add var (acc.dom_size, mu) acc.map;
             dom_size = acc.dom_size + 1 }
     in
 
     (** Increment dom_size to account for top-level variables *)
-    let skip_var acc = { acc with dom_size = acc.dom_size + 1 } in
-
-    (* let get_prob_mod (lvl : int) = *)
-    (*     match nth_tm prob_env (D.lvl_to_ix ~size:prob_size ~lvl) with *)
-    (*     | Term { mu; defined = false } -> Ok mu *)
-    (*     | TopLevel { tp } | Term { tp; defined = true } -> *)
-    (*         Error (Not_renaming (Left (D.mk_var tp lvl))) *)
-    (*     | _ -> failwith "Unreachable" *)
-    (* in *)
+    let add_top_level acc = { acc with dom_size = acc.dom_size + 1 } in
 
     let rec go_spine
         (spine : Domain.elim list) (acc : pren) : (pren, elab_error) result =
         match spine with
         | [] -> Ok acc
         | Ap (meta_mod, Normal x) :: spine' ->
-            let* var = unwrap_var x.term in
-            (* let* prob_mod = get_prob_mod var in *)
+            let* (prob_mod, var) = unwrap_var x.term in
             (* let meta_lock = MT.idm in *)
-            let prob_lock = nth_cell prob_env var in
+            (* let prob_lock = nth_cell prob_env var in *)
             let* _ = assert_res (not @@ IntMap.mem var acc.map) (Non_linear var) in
             (* let* _ = assert_res *)
             (*     (MT.eq_mod meta_mod prob_mod && MT.eq_mod prob_lock meta_lock) *)
             (*     (Not_identity_2cell *)
             (*         { prob_mod; prob_lock; meta_mod; meta_lock; variable = var }) in *)
-            go_spine spine' (add_var ~var ~meta_mod ~prob_lock acc)
+            go_spine spine' (add_var ~var ~mu:meta_mod acc)
         | e :: _ -> Error (Not_renaming (Right e))
     in
 
@@ -258,18 +247,17 @@ let invert
         | [], [] -> go_spine (List.rev spine) acc
         | M _ :: env', _ -> go_sub env' sub acc
         | (Term { defined = true } | TopLevel _) :: env', _ :: sub' ->
-            go_sub env' sub' (skip_var acc)
+            go_sub env' sub' (add_top_level acc)
         | Term { defined = false; mu = meta_mod } :: env', lazy (Normal x) :: sub' ->
-            let* var = unwrap_var x.term in
-            (* let* prob_mod = get_prob_mod var in *)
+            let* (prob_mod, var) = unwrap_var x.term in
             (* let meta_lock = Meta.Check_env.locks env' in *)
-            let prob_lock = nth_cell prob_env var in
+            (* let prob_lock = nth_cell prob_env var in *)
             let* _ = assert_res (not @@ IntMap.mem var acc.map) (Non_linear var) in
             (* let* _ = assert_res *)
             (*     (MT.eq_mod prob_mod meta_mod && MT.eq_mod prob_lock meta_lock) *)
             (*     (Not_identity_2cell *)
             (*         { prob_mod; prob_lock; meta_mod; meta_lock; variable = var }) in *)
-            go_sub env' sub' (add_var ~var ~meta_mod ~prob_lock acc)
+            go_sub env' sub' (add_var ~var ~mu:meta_mod acc)
         | _ -> failwith "Unreachable"
     in
 
@@ -277,110 +265,172 @@ let invert
         { dom_size = 0; cod_size = prob_size
         ; map = IntMap.empty; non_linear = IntSet.empty }
 
-let apply_pren
-    (pren : pren) (term : Domain.t) (meta : S.metavar) (env : env)
-    : (Syntax.t, elab_error) result =
+(** An environment that only tracks modalities, not types *)
+type mod_env_head =
+    | Tm of modality option
+    | Lock of modality
+type mod_env = mod_env_head list
 
-    let rec go (pren : pren) (env : env) (mode : mode) (term : Domain.t) : Syntax.t =
-        match term with
-        | D.Lam (mu, f) ->
-            let (env', _) = add_var ~size:pren.cod_size ~mode in _
-        | D.Neutral _ -> _
-        | D.Nat -> S.Nat
-        | D.Zero -> S.Zero
-        | D.Suc t -> S.Suc (go pren env mode t)
-        | D.Pi (_, _, _) -> _
-        | D.Sig (_, _) -> _
-        | D.Pair (fst, snd) -> S.Pair (go pren env fst, go pren env snd)
-        | D.Refl t -> S.Refl (go pren env t)
-        | D.Id (tp, x, y) -> S.Id (go pren env tp, go pren env x, go pren env y)
-        | D.Uni l -> S.Uni l
-        | D.Tymod (mu, t) -> S.TyMod (mu, go pren (M mu :: env) (MT.dom_mod mu mode) t)
-        | D.Mod (mu, t) -> S.Mod (mu, go pren (M mu :: env) (MT.dom_mod mu mode) t)
+type solve_ctx =
+    { env: mod_env; prob_size: int; meta_size: int; rigid: bool
+    ; occurs_check: S.metavar option; pren: pren option }
+
+let lift (mu : modality option) (ctx : solve_ctx) =
+    { ctx with
+        env = Tm mu :: ctx.env;
+        prob_size = ctx.prob_size + 1;
+        meta_size = ctx.meta_size + 1;
+    }
+let lift_idm = lift (Some MT.idm)
+
+let lock (mu : modality) (ctx : solve_ctx) =
+    { ctx with env = Lock mu :: ctx.env }
+
+let rec env_to_mod_env env (sp : D.elim list) = match sp, env with
+    | [], [] -> []
+    | Ap (mu, _) :: sp', _ -> Tm (Some mu) :: env_to_mod_env env sp'
+    | _ :: _, _ -> failwith "Unreachable"
+    | [], Term { mu } :: env -> Tm (Some mu) :: env_to_mod_env env sp
+    | [], TopLevel _ :: env -> Tm None :: env_to_mod_env env sp
+    | [], M mu :: env -> Lock mu :: env_to_mod_env env sp
+
+let rec nth_cell (env : mod_env) (i : int) : modality option * modality =
+    if i < 0 then invalid_arg "nth_lockless: negative de Bruijn index";
+    match env, i with
+    | [], _ -> failwith "Unreachable"
+    | Tm mu :: env', 0 -> (mu, MT.idm)
+    | Tm _ :: env', _ -> nth_cell env' (i - 1)
+    | Lock mu :: env', _ ->
+        let (nu, locks) = nth_cell env' i in
+        (nu, MT.compm (locks, mu))
+
+let check_var (ctx : solve_ctx) (ix : int) =
+    let ix' = match ctx.pren with
+        | Some pren ->
+            let cod_lvl = D.ix_to_lvl ~size:ctx.prob_size ~ix in
+            begin match IntMap.find_opt cod_lvl pren.map with
+            | Some (meta_lvl, _) -> D.lvl_to_ix ~size:ctx.meta_size ~lvl:meta_lvl
+            | None ->
+                if cod_lvl < pren.cod_size
+                then if IntSet.mem cod_lvl pren.non_linear
+                        then elab_error (Non_linear cod_lvl)
+                        else elab_error (Escaped_var cod_lvl)
+                else ix (* not free in codomain *)
+            end
+        | None -> ix
     in
 
+    let lvl = D.ix_to_lvl ~size:ctx.meta_size ~ix:ix' in
+    let (mu, locks) = nth_cell ctx.env ix' in
+    match mu with
+    | Some mu ->
+        if ctx.rigid && not (MT.leq mu locks)
+            then elab_error
+                (Inaccessible_in_solution { mu; locks; var = lvl })
+    | None -> ()
+
+let rec check_vars (ctx : solve_ctx) (tm : Syntax.t) =
+    match tm with
+    | Syntax.Var ix -> check_var ctx ix
+    | Syntax.Let (tm, body) ->
+        check_vars ctx tm;
+        check_vars (ctx |> lift_idm) body
+    | Syntax.Check (tm, tp) ->
+        check_vars ctx tm; check_vars ctx tp
+    | Syntax.Nat -> ()
+    | Syntax.Zero -> ()
+    | Syntax.Suc t -> check_vars ctx t
+    | Syntax.NRec (mot, zero, suc, scr) ->
+        check_vars (ctx |> lift_idm) mot;
+        check_vars ctx zero;
+        check_vars (ctx |> lift_idm |> lift_idm) suc;
+        check_vars ctx scr
+    | Syntax.Pi (mu, dom, cod) ->
+        check_vars (ctx |> lock mu) dom;
+        check_vars (ctx |> lift (Some mu)) cod
+    | Syntax.Lam (mu, t) -> check_vars (ctx |> lift (Some mu)) t
+    | Syntax.Ap (mu, f, x) ->
+        check_vars ctx f;
+        check_vars (ctx |> lock mu) x
+    | Syntax.Sig (fst, snd) ->
+        check_vars ctx fst;
+        check_vars (ctx |> lift_idm) snd
+    | Syntax.Pair (fst, snd) ->
+        check_vars ctx fst;
+        check_vars ctx snd
+    | Syntax.Fst p -> check_vars ctx p
+    | Syntax.Snd p -> check_vars ctx p
+    | Syntax.Id (tp, x, y) ->
+        check_vars ctx tp;
+        check_vars ctx x;
+        check_vars ctx y
+    | Syntax.Refl t -> check_vars ctx t
+    | Syntax.J (mot, refl, scr) ->
+        check_vars (ctx |> lift_idm |> lift_idm |> lift_idm) mot;
+        check_vars (ctx |> lift_idm) refl;
+        check_vars ctx scr
+    | Syntax.Uni _ -> ()
+    | Syntax.TyMod (mu, t) -> check_vars (ctx |> lock mu) t
+    | Syntax.Mod (mu, t) -> check_vars (ctx |> lock mu) t
+    | Syntax.Letmod (mu, nu, mot, body, scr) ->
+        check_vars (ctx |> lift_idm) mot;
+        check_vars (ctx |> lift_idm) body;
+        check_vars (ctx |> lock mu) scr
+    (* An axiom can't possibly contain any local variables *)
+    | Syntax.Axiom (ax, tp) -> ()
+    | Syntax.Meta (m, sub) ->
+        if Some m = ctx.occurs_check then elab_error Occurs_check;
+
+        let entry = Meta.lookup m in
+        Option.iter (fun meta -> Meta.add_used_by entry meta) ctx.occurs_check;
+        let ctx' = { ctx with rigid = false } in
+        check_vars_sub ctx' (List.rev entry.context) sub
+
+and check_vars_sub (ctx : solve_ctx) (env : env) (sub : Syntax.t list) =
+    match env, sub with
+    | [], [] -> ()
+    | TopLevel _ :: ctx', _ :: sub' -> check_vars_sub ctx ctx' sub'
+    | Term { mu } :: ctx', t :: sub' ->
+        (* check_vars pren (Lock mu :: env) size false t; *)
+        check_vars ctx t;
+        check_vars_sub ctx ctx' sub'
+    | M _ :: ctx', _ -> check_vars_sub ctx ctx' sub
+    | _ -> failwith "Unreachable"
+
+(** Apply a partial renaming to a term, also checking for occurances of a given metavariable *)
+let apply_pren
+    ~env:(env : env) ~size:(size : int)
+    ~meta:(meta : S.metavar) ~pren:(pren : pren) ~spine:(spine : D.elim list)
+    ~tp:(tp : Domain.t) ~term:(term : Domain.t) : (Domain.t, elab_error) result =
+
+    (** Convert the problem environment into a NbE environment that renames the
+        variables *)
+    let rec create_env env = match env with
+        | [] -> []
+        | TopLevel { term } :: env' -> D.value term :: create_env env'
+        | Term { level; tp } :: env' ->
+            let v = match IntMap.find_opt level pren.map with
+            | Some (v', _) -> Lazy.from_val (D.mk_var tp v')
+            | None -> lazy (failwith "Unreachable: escaped/non-linear variable")
+            in D.Val v :: create_env env'
+        | M mu :: env' -> M mu :: create_env env'
+    in
+
+    let entry = Meta.lookup meta in
+    let tm = Nbe.read_back_nf pren.cod_size (Normal { tp; term }) in
+    (* Printf.printf "while inverting, got term\n%s\n%!" (Syntax.pp tm); *)
     try
-        Ok (go pren env term)
+        check_vars
+            { env = env_to_mod_env entry.context spine
+            ; prob_size = size
+            ; meta_size = entry.size + List.length spine
+            ; rigid = true
+            ; occurs_check = Some meta
+            ; pren = Some pren }
+            tm;
+        Ok (Nbe.eval tm (create_env env))
     with
     | Elab_error e -> Error e
-
-(** Apply a partial renaming to a term, also checking for occurances of a given metavariable  *)
-(* TODO: replace this with read_back |> eval? *)
-(* TODO: check occurances of variables have 2-cells that can be factored *)
-(* let apply_pren *)
-(*     (pren : pren) (term : Domain.t) *)
-(*     (meta : S.metavar) : (Domain.t, elab_error) result = *)
-(*     let rec go (term : Domain.t) : Domain.t = *)
-(*             match term with *)
-(*             | Lam t -> Lam (go_clos t) *)
-(*             | Neutral { tp; term } -> Neutral { tp = go tp; term = go_ne term} *)
-(*             | Nat -> Nat *)
-(*             | Zero -> Zero *)
-(*             | Suc t -> Suc (go t) *)
-(*             | Pi (mu, dom, cod) -> Pi (mu, go dom, go_clos cod) *)
-(*             | Sig (l, r) -> Sig (go l, go_clos r) *)
-(*             | Pair (l, r) -> Pair (go l, go r) *)
-(*             | Refl t -> Refl (go t) *)
-(*             | Id (t, x, y) -> Id (go t, go x, go y) *)
-(*             | Uni u -> Uni u *)
-(*             | Tymod (mu, t) -> Tymod (mu, go t) *)
-(*             | Mod (mu, t) -> Mod (mu, go t) *)
-(**)
-(*     and go_envhead (h : D.envhead) : D.envhead = *)
-(*         match (h : D.envhead) with *)
-(*         | D.Val t -> D.Val (Lazy.map go t) *)
-(*         | D.M mu -> D.M mu *)
-(**)
-(*     and go_clos (Clos clos : Domain.clos) = *)
-(*         D.Clos { term = clos.term; env = List.map go_envhead clos.env } *)
-(**)
-(*     and go_clos2 (Clos2 clos : Domain.clos2) = *)
-(*         D.Clos2 { term = clos.term; env = List.map go_envhead clos.env } *)
-(**)
-(*     and go_clos3 (Clos3 clos : Domain.clos3) = *)
-(*         D.Clos3 { term = clos.term; env = List.map go_envhead clos.env } *)
-(**)
-(*     and go_ne (ne : Domain.ne) = *)
-(*         { head = go_head ne.head; spine = List.map go_elim ne.spine } *)
-(**)
-(*     and go_head (head : Domain.head) = *)
-(*         match head with *)
-(*         | Var v -> *)
-(*             begin match IntMap.find_opt v pren.map with *)
-(*             | Some (v', lb) -> Var v' *)
-(*             | None -> *)
-(*                 if IntSet.mem v pren.non_linear *)
-(*                     then elab_error (Non_linear v) *)
-(*                     else elab_error (Escaped_var v) *)
-(*             end *)
-(*         | Axiom _ -> head *)
-(*         | Meta (m, sub) -> *)
-(*             if meta = m *)
-(*             then elab_error Occurs_check *)
-(*             (* TODO: prune occurances of non-linear variables *) *)
-(*             else D.Meta (m, List.map (Lazy.map go_nf) sub) *)
-(**)
-(*     and go_nf (Normal nf) = Normal { tp = go nf.tp; term = go nf.term } *)
-(**)
-(*     and go_elim (elim : Domain.elim) = *)
-(*         match elim with *)
-(*         | D.Ap (mu, x) -> D.Ap (mu, go_nf x) *)
-(*         | D.Fst -> D.Fst *)
-(*         | D.Snd -> D.Snd *)
-(*         | D.NRec r -> *)
-(*             D.NRec { motive = go_clos r.motive; zero = go r.zero; suc = go_clos2 r.suc } *)
-(*         | D.Letmod lm -> *)
-(*             D.Letmod *)
-(*                 { mod1 = lm.mod1; mod2 = lm.mod2; motive = go_clos lm.motive *)
-(*                 ; body = go_clos lm.motive; argtp = go lm.argtp } *)
-(*         | D.J j -> *)
-(*             D.J { motive = go_clos3 j.motive; refl = go_clos j.refl *)
-(*                 ; tp = go j.tp; left = go j.left; right = go j.right } *)
-(**)
-(*     in try *)
-(*         Ok (go term) *)
-(*     with *)
-(*         | Elab_error e -> Error e *)
 
 let show_val ~size ~tp ~term = Nbe.read_back_nf size (Normal { tp; term }) |> S.pp
 
@@ -396,15 +446,16 @@ let solve
         | Error e -> elab_error (err e)
     in
 
-    Printf.printf "Got unification problem\n%s\n=\n%s\n\n%!"
-        (show_val ~size ~tp
-            ~term:(D.Neutral { tp; term = { head = D.Meta (meta, sub); spine } }))
-        (show_val ~size ~tp ~term:rhs);
+    (* Printf.printf "Got unification problem\n%s\n=\n%s\n\n%!" *)
+    (*     (show_val ~size ~tp *)
+    (*         ~term:(D.Neutral { tp; term = { head = D.Meta (meta, sub); spine } })) *)
+    (*     (show_val ~size ~tp ~term:rhs); *)
 
     let rec lams (spine : Domain.elim list) (term : Syntax.t) =
         match spine with
         | [] -> term
-        | _ :: spine' -> lams spine' (Lam term)
+        | D.Ap (mu, _) :: spine' -> lams spine' (Lam (mu, term))
+        | _ -> failwith "Unreachable"
     in
 
     let rec get_env
@@ -429,7 +480,8 @@ let solve
        non-linear variables *)
 
     (* The solution without lambdas applied *)
-    let inner_sol = unwrap @@ apply_pren pren rhs meta in
+    let inner_sol = unwrap @@
+        apply_pren ~env ~size ~meta ~pren ~spine ~tp ~term:rhs in
     let inner =
         Nbe.read_back_nf inner_size (Normal { tp = inner_tp; term = inner_sol }) in
 
@@ -438,6 +490,27 @@ let solve
     (* Now add lambdas *)
     let sol = lams spine inner in
     Printf.printf "Solved %s as %s\n\n%!" (S.show_metavar meta) (S.pp sol);
+
+    List.iter (fun m ->
+        Printf.printf "While solving %s, checking solution to %s is correct\n%!"
+            (S.show_metavar meta) (S.show_metavar m);
+        let entry = Meta.lookup m in
+        let tm = Option.get entry.value in
+        let tm' = Meta.remove_solved entry.context tm in
+        try
+            check_vars
+                { prob_size = entry.size
+                ; meta_size = entry.size
+                ; env = env_to_mod_env entry.context []
+                ; rigid = true
+                ; pren = None
+                ; occurs_check = None}
+                tm';
+            entry.value <- Some tm'
+        with
+        | Elab_error e -> raise (Elab_error (err e))
+    ) (Meta.used_by entry);
+
     Meta.solve meta sol
 
 let rec unify
@@ -454,7 +527,7 @@ let rec unify
 
     | _, Pi (mu1, dom1, cod1), Pi (mu2, dom2, cod2) ->
         check_mod_eq mu1 mu2 Left_right None;
-        unify ~env ~size ~tp ~mode dom1 dom2;
+        unify ~env:(M mu1 :: env) ~size ~tp ~mode dom1 dom2;
         let (var, new_env) = add_var ~size ~mode ~mu:mu1 ~tp:dom1 env in
         let sem_cod1 = Nbe.do_clos' cod1 var and sem_cod2 = Nbe.do_clos' cod2 var in
         unify ~env:new_env ~size ~tp ~mode sem_cod1 sem_cod2
@@ -501,11 +574,15 @@ let rec unify
         unify ~env ~size ~mode ~tp:tp1 x1 x2;
         unify ~env ~size ~mode ~tp:tp1 y1 y2;
 
+    | Id (tp, _, _), Refl x, Refl y ->
+        unify ~env ~size ~mode ~tp x y
+
     (* Tymod *)
     | _, Tymod (mu1, t1), Tymod (mu2, t2) ->
-        if not @@ MT.eq_mod mu1 mu2 then
-            elab_error (Modality_mismatch
-                { left = mu1; right = mu2; desc = Left_right; term = None });
+        check_mod_eq mu1 mu2 Left_right None;
+        (* if not @@ MT.eq_mod mu1 mu2 then *)
+        (*     elab_error (Modality_mismatch *)
+        (*         { left = mu1; right = mu2; desc = Left_right; term = None }); *)
         unify ~env:(M mu1 :: env) ~size ~mode:(MT.dom_mod mu1 mode) ~tp:tp t1 t2
 
     | Tymod (mu, arg_tp), Mod (_, x), Mod (_, y) ->
@@ -550,16 +627,19 @@ and unify_elim
     | NRec x, NRec y -> S.todo "unify NRec"
 
     | Letmod x, Letmod y ->
+        (* Printf.printf "x.mod1 = %s, x.mod2 = %s, y.mod1 = %s, y.mod2 = %s\n%!" *)
+        (*     (MT.mod_pp x.mod1) (MT.mod_pp x.mod2) (MT.mod_pp y.mod1) (MT.mod_pp y.mod2); *)
         check_mod_eq x.mod1 y.mod1 Left_right None;
         check_mod_eq x.mod2 y.mod2 Left_right None;
-        unify_tp ~env ~size ~mode x.argtp y.argtp;
+        let mod12 = MT.compm (x.mod1, x.mod2) in
+        unify_tp ~env:(M mod12 :: env) ~size ~mode x.argtp y.argtp;
         let (mot_var, mot_env) =
             add_var ~size ~mode ~mu:x.mod1 ~tp:(D.Tymod (x.mod2, x.argtp)) env in
         let mot_x = Nbe.do_clos' x.motive mot_var in
         let mot_y = Nbe.do_clos' y.motive mot_var in
         unify_tp ~env:mot_env ~size:(size + 1) ~mode mot_x mot_y;
         let (body_var, body_env) =
-            add_var ~size ~mode ~mu:(MT.compm (x.mod1, x.mod2)) ~tp:x.argtp env in
+            add_var ~size ~mode ~mu:mod12 ~tp:x.argtp env in
         let body_tp = Nbe.do_clos' x.motive (D.Mod (x.mod2, body_var)) in
         let body_x = Nbe.do_clos' x.body body_var in
         let body_y = Nbe.do_clos' y.body body_var in
@@ -598,7 +678,11 @@ and unify_sp
     | [], [] -> ()
     | (x :: xs), (y :: ys) ->
         unify_elim ~env ~size ~mode x y;
-        unify_sp ~env ~size ~mode xs ys
+        let new_mode = match x with
+            | Letmod x -> MT.dom_mod x.mod1 mode
+            | _ -> mode
+        in
+        unify_sp ~env ~size ~mode:new_mode xs ys
     | _, _ -> ()
 
 (** Unify neutral values by unifying their heads and spines.
@@ -615,10 +699,9 @@ and unify_ne
 
     | Meta (m1, sub1), Meta (m2, sub2) when m1 = m2 ->
         unify_sp ~env ~size ~mode left.spine right.spine;
-        (* List.iter2 (fun x y -> unify_nf ~env ~size ~mode x y) sub1 sub2 *)
         unify_sub ~env ~size ~mode ~meta:m1 sub1 sub2
 
-    (* TODO: this isn't the correct type :( *)
+    (* TODO: only print the mismatching section, rather than entire spine *)
     | _ -> unify_error (Neutral { tp; term = left }) (Neutral { tp; term = right })
 
 and unify_sub
@@ -632,10 +715,10 @@ and unify_sub
         | M _ :: ctx', _, _ -> go ctx' left right
         | TopLevel _ :: ctx', _ :: left', _ :: right' ->
             go ctx' left' right'
-        | Term { md } :: ctx'
+        | Term { md; mu } :: ctx'
         , lazy (D.Normal { tp; term = x }) :: left'
         , lazy (D.Normal { term = y }) :: right' ->
-            unify ~env ~size ~tp ~mode:md x y;
+            unify ~env:(M mu :: env) ~size ~tp ~mode:md x y;
             go ctx' left' right'
         | _ -> failwith "Unreachable"
     in

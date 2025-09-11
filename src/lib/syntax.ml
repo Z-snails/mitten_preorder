@@ -55,6 +55,12 @@ let find_idx ~equal key xs =
       if equal key x then Some i else go (i + 1) xs in
   go 0 xs
 
+let rec get_lams = function
+  | Lam (_, t) ->
+    let (ls, body) = get_lams t in
+    (ls + 1, body)
+  | t -> (0, t)
+
 let to_sexp ?counter env t =
   let counter = Option.value counter ~default:(ref 0) in
   let rec int_of_syn = function
@@ -109,10 +115,17 @@ let to_sexp ?counter env t =
       Sexp.List
         [ Sexp.List [var; Sexp.Atom ":"; mod_to_sexp mu; go env src]
         ; Sexp.Atom "->"; go (var :: env) dest]
-    | Lam (_, t) ->
-      incr counter;
-      let var = Sexp.Atom ("x" ^ string_of_int (! counter)) in
-      Sexp.List [Sexp.Atom "lam"; var; go (var :: env) t]
+    (* | Lam (_, t) -> *)
+    (*   incr counter; *)
+    (*   let var = Sexp.Atom ("x" ^ string_of_int (! counter)) in *)
+    (*   Sexp.List [Sexp.Atom "lam"; var; go (var :: env) t] *)
+    | Lam _ as t ->
+      let (ls, body) = get_lams t in
+      let vars =
+        List.init ls (fun _ ->
+          incr counter;
+          Sexp.Atom ("x" ^ string_of_int !counter)) in
+      Sexp.List ([Sexp.Atom "lam"] @ vars @ [go (List.rev vars @ env) body])
     | Ap (mu, t1, t2) ->
       Sexp.List [go env t1; mod_to_sexp mu; go env t2]
     | Sig (fst, snd) ->

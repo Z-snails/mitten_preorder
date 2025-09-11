@@ -75,7 +75,7 @@ The implementation is derived from [nbe-for-mltt](https://github.com/jozefg/nbe-
 - [x] Add `force` to `src/lib/check.ml` to allow type-checking metavariables; or
 - [x] Add a pass to replace metavariables with their solutions (this is pretty
   tricky on account of top level definitions using de Bruijn variables)
-- [ ] Track when a metavariable m is solved in terms of another metavariable n,
+- [x] Track when a metavariable m is solved in terms of another metavariable n,
   and when n is solved, update the solution of m
 - [ ] Replace remaining uses of `add_term` with `add_var`
 - [x] Copy examples from elab zoo
@@ -83,6 +83,11 @@ The implementation is derived from [nbe-for-mltt](https://github.com/jozefg/nbe-
 - [ ] Find reference of proof that solving metavariables works (for pattern fragment)
     - [ ] Read it
 - [x] Fix the bug in stream.tt
+- [ ] Can typing rules for metavariables/delayed substitutions be given?
+  - For sake of implementation, we want delayed sub to be list of terms, but for type-theory we want it to be proper substitution
+  - Given proper sub, can we apply it to each variable to get the list of terms?
+  - Given an NbE environment, can we reconstruct the proper sub from a list of terms?
+  - If not, can we find an appropriate context to check each term in the sub in?
 
 ## Papers on correctness of unification/solving metavariable in pattern fragment
 
@@ -93,6 +98,7 @@ The implementation is derived from [nbe-for-mltt](https://github.com/jozefg/nbe-
   - Seems promising, there's a section on correctness and the algorithm seems similar to ours
   - Proves that if unification succeeds then type checking produces well-typed terms
   - Well-typedness for metavariable solution ends up being pretty straightforward
+  - Has a new term former for a term that type checks only once some constraints have been solved
 
 - [ ] https://arxiv.org/abs/1609.09709 Type checking through unification
   - Has a pretty different algorithm
@@ -120,16 +126,49 @@ The implementation is derived from [nbe-for-mltt](https://github.com/jozefg/nbe-
 ### Things to prove
 
 - Solving gives a valid term
-    - Term should type check
-    - and should solve the problem
+  - Term should type check
+  - and should solve the problem
+  - TODO: requires definition of pattern fragment
+  - Easier solution: check variable accesses are fine, then reuse existing proof?
 - Gives a most general unifier (how is this defined exactly?)
+  - TODO: Can "lift" the proof from MLTT, ie erase modalities
 - If there is a solution that makes the program type check, then the solution found should make the program type check
+  - TODO: this is just the previous point?
+
+Things to prove that aren't about solving metavariables:
+- The generated term is the same as the input term, but with holes replaced by terms
 
 ### Thoughts
 
 - For non-modal DTT, I think showing solving metavariables in pattern fragment gives a well-typed solution will be pretty easy
+  - Maybe do this first?
+  - In proof assistant? will take longer but may be more fun?
 - The difficult part of the proof for MTT will be showing variable accesses are valid, which isn't an issue for non-modal DTT
 - Do the locks in the problem/meta context matter?
+  - Yes
+
+### Ideas on what to work on
+
+- Prove solving metavariables in pattern fragment of MTT is correct
+  - Gives valid solution
+  - Gives most general solution
+- Verify e.g. elab-zoo's algorithm in Agda/something else
+- Improve mitten's elaboration
+  - Pruning (this one)
+    - Replace (x, y) in sub with 2 terms x, y
+    - Replace mod mu x in sub with x at updated modality
+    - Allow Fst and Snd eliminators by refining the metavariable
+  - Implicit arguments
+  - Dynamic order elaboration a la elab-zoo
+  - Dynamic order constraint solving a la Norell PracticalDTT
+  - Use actual global variables rather than de Bruijn indices and hackiness in the context?
+- Write a report
+- Work on talk on elaboration
+
+### Timeline
+
+- Next week --- split time hacking on mitten and working on talk
+- After that --- talk, prove things about most general unifiers and write report
 
 # Log
 

@@ -6,7 +6,8 @@ open Mode_theory
 module Check_env = struct
     (* The mode is the domain of the modality mu. This is needed because the implementation of modalities is ambiguous for identity modalitities.*)
     type env_entry =
-        | Term of { term: D.t; mu: m; tp: D.t; md: mode; defined: bool }
+        | Term of
+            { level: int; term: D.t; mu: m; tp: D.t; md: mode; defined: bool }
         | TopLevel of
             { name: Concrete_syntax.ident; level: int; term: D.t; tp: D.t; md: mode }
         | M of m
@@ -14,13 +15,13 @@ module Check_env = struct
     type env = env_entry list
 
     (** Add a term to an environment. To add a bound variable, use add_var *)
-    let add_term ~md ~term ~mu ~tp ?(defined = false) env =
-        Term { term; mu; tp; md; defined } :: env
+    let add_term ~size ~md ~term ~mu ~tp ?(defined = false) env =
+        Term { level = size; term; mu; tp; md; defined } :: env
 
     (** Add a bound variable to an environment *)
     let add_var ~size ~mode ~mu ~tp env =
         let var = D.mk_var tp size in
-        (var, Term { term = var; mu; tp;
+        (var, Term { level = size; term = var; mu; tp;
             md = dom_mod mu mode; defined = false } :: env)
 
     let rec nth_lockless (env : env) (i : int) : env_entry * m =
@@ -30,7 +31,7 @@ module Check_env = struct
         | (Term _ | TopLevel _) as t :: env' ->
             if i == 0 then (t, idm) else nth_lockless env' (i - 1)
         | M mu :: env' ->
-            let (tm, nu) = (nth_lockless env' i) in
+            let (tm, nu) = nth_lockless env' i in
             (tm, compm (nu, mu))
 
     let nth_tm (env : env) (i : int) : env_entry = fst (nth_lockless env i)
@@ -45,8 +46,8 @@ module Check_env = struct
     let env_to_sem_env : env -> Domain.env =
         List.map
             (function
-            | TopLevel {term; _} -> D.Val (Lazy.from_val term)
-            | Term {term; mu = _; tp = _} -> D.Val (Lazy.from_val term)
+            | TopLevel {term; _} -> D.value term
+            | Term {term; mu = _; tp = _} -> D.value term
             | M mu -> D.M mu)
 
     let rec locks (env : env) : m =
@@ -69,11 +70,10 @@ type entry = {
     sem_tp: Domain.t;
     tp: Syntax.t;
     mutable value: Syntax.t option;
-    mutable used_by: MetaSet.t (* TODO: use this (see README.md) *)
+    mutable used_by: MetaSet.t
 }
 
 let next_meta : int ref = ref 1
-(* Ideally should be a dynamically sized array *)
 let store : entry map ref = ref MetaMap.empty
 
 let create (mk : int -> entry) : S.metavar =
@@ -90,9 +90,6 @@ let vars (env : env) : Syntax.t list =
         | (Term _ | TopLevel _) :: env' ->
             let (sp, len) = go env' in
             (Var len :: sp, len + 1)
-        (* | Term { defined = false } :: env' -> *)
-        (*     let (sp, len) = go env' in *)
-        (*     (Var len :: sp, len + 1) *)
         | M _ :: env' -> go env'
     in fst (go env)
 
@@ -118,6 +115,16 @@ let solve (m : S.metavar) (tm : Syntax.t) : unit =
 
 let all_metas () : (S.metavar * entry) list =
     List.map (function (m, e) -> (S.Metavar (m, e.name), e)) (MetaMap.bindings !store)
+
+let add_used_by (entry : entry) (S.Metavar (n, _)) =
+    entry.used_by <- MetaSet.add n entry.used_by
+
+let used_by (entry : entry) =
+    List.map
+        (fun m ->
+            let e = MetaMap.find m !store in
+            S.Metavar (m, e.name))
+        (MetaSet.elements entry.used_by)
 
 (* This is kinda pointless anyway since metavariables can be solved by later
    defintions, so we still need force all over the place. I'll use it anyway

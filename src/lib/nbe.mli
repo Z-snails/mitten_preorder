@@ -10,7 +10,7 @@ val read_back_nf : int -> Domain.nf -> Syntax.t
 val read_back_tp : int -> Domain.t -> Syntax.t
 
 (* Check whether a semantic element is equal to another *)
-val check_nf : Mode_theory.mode -> int -> Domain.nf -> Domain.nf -> bool
+val check : Mode_theory.mode -> int -> tp:Domain.t -> Domain.t -> Domain.t -> bool
 val check_ne : Mode_theory.mode -> int -> Domain.ne -> Domain.ne -> bool
 (* If subtype = true then we check whether the first argument is a subtype of the latter *)
 val check_tp : Mode_theory.mode -> subtype:bool -> int -> Domain.t -> Domain.t -> bool

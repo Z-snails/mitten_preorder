@@ -67,7 +67,7 @@ and nf =
   | Normal of {tp : t; term : t}
   [@@deriving show]
 
-let untp_sub = List.map (Lazy.map (function Normal { term } -> term))
+let untp_sub = List.map (Lazy.map_val (function Normal { term } -> term))
 
 let var (lvl : int) = { head = Var lvl; spine = [] }
 
@@ -82,12 +82,25 @@ let meta (m : S.metavar) (sub : tp_sub) = { head = Meta (m, sub); spine = [] }
 (* env_val is giving the nth entry of the environment list, ONLY counting values. env_cell then gives the corresponding
    cell as it is required for the nbe algorithm *)
 
+let env_size env =
+  let rec go e acc =
+    match e with
+    | [] -> acc
+    | M _ :: e' -> go e' acc
+    | Val _ :: e' -> go e' (acc + 1)
+  in go env 0
+
 let rec env_val env i =
   match env with
   | [] -> raise (Invalid_argument "env_val should not reach the empty list")
-  | Val v :: lst -> if Int.equal i 0 then Lazy.force v
-    else if i > 0 then env_val lst (i - 1)
-    else failwith "env_cell does not accept negative input"
+  | Val v :: lst ->
+    if Int.equal i 0
+      then Lazy.force v
+      else if i > 0 then env_val lst (i - 1)
+      else failwith "env_cell does not accept negative input"
   | M _ :: lst -> env_val lst i
 
 let lvl_to_ix ~size ~lvl = size - (lvl + 1)
+let ix_to_lvl ~size ~ix = size - (ix + 1)
+
+let value t = Val (Lazy.from_val t)

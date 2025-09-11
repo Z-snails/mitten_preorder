@@ -20,6 +20,7 @@ type m_constr =
   | D
   | G
   | Box
+  [@@deriving show]
 
 (* In this implementation the concatenation is the wrong way around, i.e. mu :: nu = nu o mu.
    This is corrected in the compm function
@@ -29,6 +30,7 @@ type m_constr =
 (** A modality *)
 (* Snoc list *)
 type m = m_constr list
+  [@@derive show]
 
 let equal_m mu nu =
   match  mu,  nu with
@@ -39,7 +41,6 @@ let equal_m mu nu =
   | _ -> false
 
 let idm = []
-let compm (mu, nu) = List.append nu mu
 
 let dom_m_constr mu =
   match mu with
@@ -74,6 +75,34 @@ let eq_mode m1 m2 =
   | T, T -> true
   | _, _ -> false
 
+(* We only have the identity and compositions of it.
+   Hence if the domain of the cells are equal, there is no flex.
+*)
+
+let mode_to_sexp = function
+  | S -> Sexp.Atom "s"
+  | T -> Sexp.Atom "t"
+
+let mode_pp m = mode_to_sexp m |> Sexp.to_string_hum
+
+let m_constr_sexp mu =
+  match mu with
+  | L -> Sexp.Atom "l"
+  | D -> Sexp.Atom "d"
+  | G -> Sexp.Atom "g"
+  | Box -> Sexp.Atom "box"
+
+let mod_to_sexp mu =
+  (* let rec rec_helper mu = *)
+  (*   match List.rev mu with *)
+  (*   | [] -> [] *)
+  (*   | mu :: tail -> m_constr_sexp mu :: rec_helper tail in *)
+  (* Sexp.List (rec_helper mu) *)
+  Sexp.List (List.rev_map m_constr_sexp mu)
+
+let mod_pp mu = mod_to_sexp mu |> Sexp.to_string_hum
+
+
 (* A small NbE algorithm to evaluate modalities to normal forms *)
 (* L = Later, B = Box, D = Delta, G = Gamma *)
 (* Due to the rewriting system of the bowling pin mode theory our normal forms should be of the form *)
@@ -83,6 +112,7 @@ type nf_m =
   | LB of int
   | LD of int
   | Sem_G
+  [@@deriving show]
 
 (* Sem_L 0 is the identity modality for any mode. we do not need to consider the modes for normalization, here we may assume that the modalities are already well formed *)
 let sem_id = Sem_L 0
@@ -126,7 +156,10 @@ let nf_comp nf mu =
   | LD _ , G -> sem_id
   | LD _ , Box -> LD 0
   | Sem_G , D -> LB 0
-  | _ -> error_m "Not well defined composition of modalities or mistake in normal form algorithm, check nf_comp in mode theory implementation"
+  | _ -> error_m @@
+    Printf.sprintf
+      "Not well defined composition of modalities or mistake in normal form algorithm, check nf_comp in mode theory implementation\nnf = %s\nmu = %s"
+      (show_nf_m nf) (show_m_constr mu)
 
 let eval mu = List.fold_left nf_comp sem_id mu
 
@@ -134,32 +167,14 @@ let leq mu nu = nf_leq (eval mu) (eval nu)
 
 let eq_mod mu nu = nf_eq (eval mu) (eval nu)
 
-(* We only have the identity and compositions of it.
-   Hence if the domain of the cells are equal, there is no flex.
-*)
-
-let mode_to_sexp = function
-  | S -> Sexp.Atom "s"
-  | T -> Sexp.Atom "t"
-
-let mode_pp m = mode_to_sexp m |> Sexp.to_string_hum
-
-let m_constr_sexp mu =
-  match mu with
-  | L -> Sexp.Atom "l"
-  | D -> Sexp.Atom "d"
-  | G -> Sexp.Atom "g"
-  | Box -> Sexp.Atom "box"
-
-let mod_to_sexp mu =
-  (* let rec rec_helper mu = *)
-  (*   match List.rev mu with *)
-  (*   | [] -> [] *)
-  (*   | mu :: tail -> m_constr_sexp mu :: rec_helper tail in *)
-  (* Sexp.List (rec_helper mu) *)
-  Sexp.List (List.rev_map m_constr_sexp mu)
-
-let mod_pp mu = mod_to_sexp mu |> Sexp.to_string_hum
+let compm (mu, nu) =
+  let res = List.append nu mu in
+  try
+  ignore (eval res); res
+  with
+    | e ->
+    Printf.printf "Failed to compm (%s, %s)\n%!" (mod_pp mu) (mod_pp nu);
+    raise e
 
 (* Maps for binding modalities, cells and modes *)
 

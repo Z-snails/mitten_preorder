@@ -68,4 +68,9 @@ val meta : Syntax.metavar -> tp_sub -> ne
 
 val untp_sub : tp_sub -> sub
 
+val env_size : env -> int
+
 val lvl_to_ix : size:int -> lvl:int -> int
+val ix_to_lvl : size:int -> ix:int -> int
+
+val value : t -> envhead

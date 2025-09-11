@@ -10,7 +10,7 @@ let create_env (meta : Syn.metavar) (sub : D.sub) =
     match ctx, sub with
     | [], [] -> []
     | TopLevel { term } :: ctx', _ :: sub' ->
-      D.Val (Lazy.from_val term) :: go ctx' sub'
+      D.value term :: go ctx' sub'
     | Term _ :: ctx', t :: sub' ->
       D.Val t :: go ctx' sub'
     | M mu :: ctx', _ -> D.M mu :: go ctx' sub
@@ -30,7 +30,8 @@ and do_clos2 clos a1 a2 = gen_do_clos2 clos (Val a1) (Val a2)
 and do_clos2' clos a1 a2 = do_clos2 clos (Lazy.from_val a1) (Lazy.from_val a2)
 
 and gen_do_clos3 (D.Clos3 {term; env}) a1 a2 a3 = eval term (a3 :: a2 :: a1 :: env)
-and do_clos3 clos a1 a2 a3 = gen_do_clos3 clos (Val a1) (Val a2) (Val a3)
+and do_clos3 clos a1 a2 a3 =
+  gen_do_clos3 clos (Val a1) (Val a2) (Val a3)
 and do_clos3' clos a1 a2 a3 =
   do_clos3 clos (Lazy.from_val a1) (Lazy.from_val a2) (Lazy.from_val a3)
 
@@ -101,14 +102,15 @@ and do_j mot refl eq =
     end
   | _ -> raise (Nbe_failed "Not a Refl or Neutral value in do_j")
 
-and do_letmod nu tyclos body def =
+and do_letmod mu nu tyclos body def =
   match def with
   | D.Mod (_, tm1) -> do_clos' body tm1
   | D.Neutral {tp; term = e} ->
     begin
       match tp with
-      | D.Tymod (mu, argtp) ->
-        let tp2 = do_clos' tyclos (D.Neutral {tp = D.Tymod (mu, argtp); term = e}) in
+      | D.Tymod (nu', argtp) ->
+        assert (eq_mod nu nu');
+        let tp2 = do_clos' tyclos def in
         D.Neutral
           { tp = tp2; term =
             D.elim (D.Letmod { mod1 = mu; mod2 = nu; motive = tyclos; body; argtp }) e }
@@ -127,7 +129,7 @@ and eval t (env : D.env) =
   (*       Printf.printf "Variable %d in env of length %d\n" id (List.length env); *)
   (*       raise e *)
   (*     end *)
-  | Syn.Let (def, body) -> eval body ((D.Val (lazy (eval def env))) :: env)
+  | Syn.Let (def, body) -> eval body (D.Val (lazy (eval def env)) :: env)
   | Syn.Check (term, _) -> eval term env
   | Syn.Nat -> D.Nat
   | Syn.Zero -> D.Zero
@@ -157,17 +159,15 @@ and eval t (env : D.env) =
   | Syn.Mod (mu, t) ->
     let new_env = D.M mu :: env in
     D.Mod (mu, eval t new_env)
-  | Syn.Letmod (_ ,nu ,tyfam , body , def) ->
-    do_letmod nu
+  | Syn.Letmod (mu, nu, tyfam, body, def) ->
+    do_letmod mu nu
       (D.Clos {term = tyfam; env = env})
       (D.Clos {term = body; env = env}) (eval def env)
   | Syn.Axiom (str, tp) ->
     D.Neutral {tp = eval tp env; term = D.axiom str (eval tp env)}
   | Syn.Meta (m, sub) ->
     let e = Meta.lookup m in
-    let size = List.length @@ List.filter (function
-      | D.M _ -> false
-      | D.Val _ -> true) env in
+    let size = D.env_size env in
     (* Printexc.get_callstack 10 |> Printexc.raw_backtrace_to_string |> print_endline; *)
     (* Printf.printf "While evaluating meta %s. Got sub\n  %s\n\n results in\n%s\n%!" *)
     (*   (Syntax.show_metavar m) *)
@@ -200,8 +200,8 @@ and eval_tp_sub
 
     (* A local variable --- evaluate the given term, and update the type
        according to the substitution we have created so far *)
-    | (t :: sp'), (Term { tp } :: ctx') ->
-      let sem_t = lazy (eval t env) in
+    | (t :: sp'), (Term { tp; mu } :: ctx') ->
+      let sem_t = lazy (eval t (M mu :: env)) in
       (* Most terms in the spine are ignored, so this lets us avoid evaluating
          them and also avoid having to do substitutions to compute the types *)
       lazy (D.Normal { tp = subst (sub, size - msize) tp; term = Lazy.force sem_t })
@@ -222,6 +222,7 @@ and eval_tp_sub
   go sp (List.rev entry.context) [] 0
 
 
+(* TODO: include modalities in sub *)
 and eval_sub ~env:(env : D.env) (sp : Syntax.t list) : D.sub =
   List.map (fun t -> lazy (eval t env)) sp
 
@@ -231,7 +232,7 @@ and do_elim (elim : Domain.elim) (tm : Domain.t) : Domain.t =
     | Fst, tm -> do_fst tm
     | Snd, tm -> do_snd tm
     | NRec x, tm -> do_nrec x.motive x.zero x.suc tm
-    | Letmod x, tm -> do_letmod x.mod1 x.motive x.body tm
+    | Letmod x, tm -> do_letmod x.mod1 x.mod2 x.motive x.body tm
     | J x, tm -> do_j x.motive x.refl tm
 
 and do_spine (spine : Domain.elim list) (tm : Domain.t) : Domain.t =
@@ -612,21 +613,19 @@ and check_head (m : mode) (size : int) (h1 : D.head) (h2 : D.head) =
 and check_sub
   (m : mode) (size : int) (meta : Syn.metavar) (left : D.tp_sub) (right : D.tp_sub) =
 
-  let rec go
-    (size : int) (ctx : Meta.Check_env.env)
-    (left : D.tp_sub) (right : D.tp_sub) =
+  let rec go (ctx : Meta.Check_env.env) (left : D.tp_sub) (right : D.tp_sub) =
     match ctx, left, right with
     | [], [], [] -> true
     | Term { mu } :: ctx', lazy x :: xs, lazy y :: ys ->
       check_nf (dom_mod mu m) size x y
-        && go (size + 1) ctx' xs ys
+        && go ctx' xs ys
     (* We don't need to check global variables are the same, since the 2 subs
        are in the same context *)
-    | TopLevel _ :: ctx', _ :: xs, _ :: ys -> go (size + 1) ctx' xs ys
+    | TopLevel _ :: ctx', _ :: xs, _ :: ys -> go ctx' xs ys
     | _ -> failwith "Unreachable"
   in
   let entry = Meta.lookup meta in
-  go size (List.rev entry.context) left right
+  go (List.rev entry.context) left right
 
 
 and check_elim (m : mode) (size : int) (e1 : D.elim) (e2 : D.elim) =
@@ -701,8 +700,8 @@ and check_tp m ~subtype size d1 d2 =
     check_tp m ~subtype (size + 1) (do_clos' snd var) (do_clos' snd' var)
   | D.Id (tp1, left1, right1), D.Id (tp2, left2, right2) ->
     check_tp m ~subtype size tp1 tp2 &&
-    check_nf m size (D.Normal {tp = tp1; term = left1}) (D.Normal {tp = tp1; term = left2}) &&
-    check_nf m size (D.Normal {tp = tp1; term = right1}) (D.Normal {tp = tp1; term = right2})
+    check m size ~tp:tp1 left1 left2 &&
+    check m size ~tp:tp1 right1 right2
   | D.Uni k, D.Uni j -> if subtype then k <= j else k = j
   | D.Tymod (mu, tp), D.Tymod (nu, tp1) ->
     let new_m = dom_mod mu m in

@@ -10,16 +10,17 @@ type env = Env of {size : int; check_env : Check_env.env; bindings : string list
 
 let initial_env = Env {size = 0; check_env = []; bindings = []}
 
-type output =
-  | Def of CS.ident * S.t * S.t * env
+type check_output =
+  | CheckedDef of CS.ident * S.t * S.t * env
   | NF_term of S.t * S.t
   | NF_def of CS.ident * S.t
   | Quit
 
 let update_env env = function
-  | Def (_, _, _, env') -> env'
+  | CheckedDef (_, _, _, env') -> env'
   | NF_term _ | NF_def _ | Quit -> env
 
+(** Print a value, and return true if we should continue checking the program *)
 let output (Env { bindings; _ }) =
   let open Sexplib in
   let show ?indent s =
@@ -27,19 +28,19 @@ let output (Env { bindings; _ }) =
     |> Sexp.to_string_hum ?indent
   in
   function
-  | Def (name, tp, tm, _) ->
-    Printf.printf "%s\n  : %s\n  = %s\n\n" name (show tp ~indent:5) (show tm ~indent:5)
+  | CheckedDef (name, tp, tm, _) ->
+    Printf.printf "%s\n  : %s\n  = %s\n\n" name (show tp ~indent:5) (show tm ~indent:5);
   | NF_term (s, t) ->
     Printf.printf "Computed normal form of\n  %s\nas\n  %s\n%!"
-      (show s ~indent:3) (show t ~indent:3)
+      (show s ~indent:3) (show t ~indent:3);
   | NF_def (name, t) ->
-    Printf.printf "Computed normal form of [%s]:\n  %s\n%!" name (show t ~indent:3)
-  | Quit -> exit 0
+    Printf.printf "Computed normal form of [%s]:\n  %s\n%!" name (show t ~indent:3);
+  | Quit -> ()
 
 let find_idx key =
   let rec go i = function
     | [] -> raise (Check.Type_error (Check.Misc ("Unbound variable: " ^ key)))
-    | x :: xs -> if String.equal x key then i else go (i + 1) xs in
+    | x :: xs -> if x = key then i else go (i + 1) xs in
   go 0
 
 let rec int_to_term = function
@@ -109,52 +110,42 @@ let rec bind (env : string list) : Concrete_syntax.t -> U.preterm = function
     }
   | CS.Hole n -> U.Hole n
 
-let process_decl (Env { size; check_env; bindings })  = function
+type elab_output =
+  | ElabDef of { name: CS.ident; def: Syntax.t; tp: Syntax.t; md: M.mode }
+  | NormalizeDef of CS.ident
+  | NormalizeTerm of { term: Syntax.t; tp: Syntax.t; md: M.mode }
+  | ElabAxiom of { name: CS.ident; tp: Syntax.t; md: M.mode }
+  | Quit
+
+let elab_decl (Env { size; check_env; bindings } as env) = function
   | CS.Def { name; def; tp; md } ->
-    (* Printf.printf "About to check %s\n%!" name; *)
     let bind_md = M.bind_mode md in
     let def = bind bindings def in
     let tp = bind bindings tp in
     let sem_env = Check_env.env_to_sem_env check_env in
 
-    (* Elaborate the type, then check the resulting value is well-typed *)
-    let tp2 = Elab.while_elaborating name
+    let tp2 = Elab.while_elaborating ~size name
       (fun _ -> Elab.check_tp ~size ~env:check_env ~term:tp ~mode:bind_md) in
-    let tp3 = Meta.remove_solved check_env tp2 in
-    (* Printf.printf "  got tp3\n%!"; *)
-    Check.check_tp ~size ~env:check_env ~term:tp3 ~m:bind_md;
-    let sem_tp = Nbe.eval tp3 sem_env in
+    let sem_tp = Nbe.eval tp2 sem_env in
 
-    (* Printf.printf "  checked tp3\n%!"; *)
-
-    (* Repeat with the definition *)
-    let def2 = Elab.while_elaborating name
+    let def2 = Elab.while_elaborating ~size name
       (fun _ -> Elab.check ~size ~env:check_env ~tp:sem_tp ~term:def ~mode:bind_md) in
-    (* Printf.printf "  got def2\n%!"; *)
-    let def3 = Meta.remove_solved check_env def2 in
-    (* Printf.printf "  got def3\n%!"; *)
-    Check.check ~size ~env:check_env ~term:def3 ~tp:sem_tp ~m:bind_md;
-    let sem_def = Nbe.eval def3 sem_env in
 
-    (* Printf.printf "  checked def3\n%!"; *)
+    let sem_def = Nbe.eval def2 sem_env in
 
     let new_entry =
       Check_env.TopLevel
         { name; level = size; term = sem_def; tp = sem_tp; md = bind_md } in
-    Def (name, tp3, def3,
-      Env {
+
+    ( ElabDef { name; def = def2; tp = tp2; md = bind_md }
+    , Env {
         size = size + 1;
         check_env = new_entry :: check_env;
         bindings = name :: bindings })
 
   | CS.NormalizeDef name ->
-    let err = Check.Type_error (Check.Misc ("Unbound variable: " ^ name)) in
-    begin
-      match List.nth_opt check_env (find_idx name bindings) with
-      | Some (Check_env.TopLevel { term; tp; md = _ }) ->
-        NF_def (name, Nbe.read_back_nf 0 (D.Normal {term; tp}))
-      | _ -> raise err
-    end
+    ignore @@ find_idx name bindings;
+    (NormalizeDef name, env)
 
   | CS.NormalizeTerm {term; tp; md} ->
     let bind_md = M.bind_mode md in
@@ -163,14 +154,11 @@ let process_decl (Env { size; check_env; bindings })  = function
     let sem_env = Check_env.env_to_sem_env check_env in
 
     let tp2 = Elab.check_tp ~size ~env:check_env ~term:tp ~mode:bind_md in
-    Check.check_tp ~size ~env:check_env ~term:tp2 ~m:bind_md;
     let sem_tp = Nbe.eval tp2 sem_env in
 
     let term2 = Elab.check ~size ~env:check_env ~tp:sem_tp ~term:term ~mode:bind_md in
-    Check.check ~size ~env:check_env ~term:term2 ~tp:sem_tp ~m:bind_md;
-    let sem_term = Nbe.eval term2 sem_env in
-    let norm_term = Nbe.read_back_nf 0 (D.Normal {term = sem_term; tp = sem_tp}) in
-    NF_term (term2, norm_term)
+
+    (NormalizeTerm { term = term2; tp = tp2; md = bind_md }, env)
 
   | CS.Axiom {name; tp; md} ->
     let bind_md = M.bind_mode md in
@@ -178,8 +166,6 @@ let process_decl (Env { size; check_env; bindings })  = function
     let sem_env = Check_env.env_to_sem_env check_env in
 
     let tp2 = Elab.check_tp ~size ~env:check_env ~term:tp ~mode:bind_md in
-    let tp3 = Meta.remove_solved check_env tp2 in
-    Check.check_tp ~size ~env:check_env ~term:tp3 ~m:bind_md;
     let sem_tp = Nbe.eval tp2 sem_env in
 
     let new_entry =
@@ -188,21 +174,95 @@ let process_decl (Env { size; check_env; bindings })  = function
         ; tp = sem_tp; md = bind_md
         }
     in
-    Def (name, tp3, S.Axiom (name, tp3),
+    ( ElabAxiom { name; tp = tp2; md = bind_md }
+    , Env
+        { size = size + 1; check_env = new_entry :: check_env
+        ; bindings = name :: bindings })
+
+  | CS.Quit -> (Quit, env)
+
+let process_decl (Env { size; check_env; bindings }) = function
+  | ElabDef { name; def; tp; md } ->
+    let tp = Meta.remove_solved check_env tp in
+    let def = Meta.remove_solved check_env def in
+    let sem_env = Check_env.env_to_sem_env check_env in
+
+    Check.check_tp ~size ~env:check_env ~term:tp ~m:md;
+    let sem_tp = Nbe.eval tp sem_env in
+
+    Check.check ~size ~env:check_env ~term:def ~tp:sem_tp ~m:md;
+    let sem_def = Nbe.eval def sem_env in
+
+    (* Printf.printf "  checked def3\n%!"; *)
+
+    let new_entry =
+      Check_env.TopLevel
+        { name; level = size; term = sem_def; tp = sem_tp; md } in
+    CheckedDef (name, tp, def,
+      Env {
+        size = size + 1;
+        check_env = new_entry :: check_env;
+        bindings = name :: bindings })
+
+  | NormalizeDef name ->
+    begin
+      match List.nth check_env (find_idx name bindings) with
+      | Check_env.TopLevel { term; tp; md = _ } ->
+        NF_def (name, Nbe.read_back_nf 0 (D.Normal {term; tp}))
+      | _ -> failwith "Unreachable"
+    end
+
+  | NormalizeTerm {term; tp; md} ->
+    let tp = Meta.remove_solved check_env tp in
+    let term = Meta.remove_solved check_env term in
+    let sem_env = Check_env.env_to_sem_env check_env in
+
+    Check.check_tp ~size ~env:check_env ~term:tp ~m:md;
+    let sem_tp = Nbe.eval tp sem_env in
+
+    Check.check ~size ~env:check_env ~term:term ~tp:sem_tp ~m:md;
+    let sem_term = Nbe.eval term sem_env in
+
+    let norm_term = Nbe.read_back_nf 0 (D.Normal {term = sem_term; tp = sem_tp}) in
+    NF_term (term, norm_term)
+
+  | ElabAxiom { name; tp; md } ->
+    let tp = Meta.remove_solved check_env tp in
+    let sem_env = Check_env.env_to_sem_env check_env in
+
+    Check.check_tp ~size ~env:check_env ~term:tp ~m:md;
+    let sem_tp = Nbe.eval tp sem_env in
+
+    let new_entry =
+      Check_env.TopLevel
+        { name; level = size; term = D.Neutral {tp = sem_tp; term = D.axiom name sem_tp}
+        ; tp = sem_tp; md
+        }
+    in
+    CheckedDef (name, tp, S.Axiom (name, tp),
       Env
         { size = size + 1; check_env = new_entry :: check_env
         ; bindings = name :: bindings })
 
-  | CS.Quit -> Quit
+  | Quit -> Quit
 
-let rec process_sign ?(env = initial_env) = function
-  | [] -> env
+let rec elab_sign env = function
+  | [] -> []
+  | CS.Quit :: _ -> [Quit]
   | d :: ds ->
-    (* Printf.printf "About to process_decl\n%!"; *)
+    let (d', env) = elab_decl env d in
+    let ds' = elab_sign env ds in
+    d' :: ds'
+
+let rec check_sign ?(env = initial_env) = function
+  | [] | Quit :: _ -> env
+  | d :: ds ->
     let o = process_decl env d in
-    (* Printf.printf "About to output\n%!"; *)
     output env o;
-    process_sign ~env:(update_env env o) ds
+    check_sign ~env:(update_env env o) ds
+
+let process_sign ?(env = initial_env) ds =
+  elab_sign env ds |> check_sign ~env
 
 (* TODO: variable names *)
 let print_unsolved_holes (_ : env) =
@@ -214,7 +274,9 @@ let print_unsolved_holes (_ : env) =
     | Check_env.Term x :: env' ->
       let (ctx, names, size) = pp_env ~counter env' in
       incr counter; let v = "x" ^ string_of_int !counter in
-      ( Printf.sprintf "%s : %s" v (pp_domain ~counter ~names size x.tp) :: ctx
+      ( Printf.sprintf "%s :%s %s"
+        v (M.mod_pp x.mu) (pp_domain ~counter ~names size x.tp)
+        :: ctx
       , v :: names
       , size + 1
       )
@@ -233,8 +295,8 @@ let print_unsolved_holes (_ : env) =
     List.iter print_endline (List.rev ctx);
     assert (size = e.size);
     print_endline "====================";
-    Printf.printf "%s : %s\n\n" (Syntax.show_metavar m)
-      (Syntax.pp ~counter ~names e.tp);
+    Printf.printf "%s : %s\n\n"
+      (Syntax.show_metavar m) (Syntax.pp ~counter ~names e.tp);
   in
 
   let unsolved_holes =

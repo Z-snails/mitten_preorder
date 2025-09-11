@@ -10,6 +10,21 @@ let inv1 : (A : U<0>) -> (B : U<0>) -> (Id _ A B) -> Id _ B A @ T =
 let transp_inv : (A : U<0>) -> (B : U<0>) -> (Id _ A B) -> B -> A @ T =
     fun A B eq y -> transp _ _ (inv1 _ _ eq) y
 
+let transp_iso1 :
+    (A : U<0>) -> (B : U<0>) -> (p : Id _ A B) -> (x : A) ->
+    Id _ (transp_inv _ _ p (transp _ _ p x)) x @ T =
+    fun A B eq ->
+        match eq at a b p -> (x : a) -> Id _ (transp_inv _ _ p (transp _ _ p x)) x with
+        | refl _ -> fun _ -> refl _
+
+let transp_iso2 :
+    (A : U<0>) -> (B : U<0>) -> (p : Id _ A B) -> (x : B) ->
+    Id _ (transp _ _ p (transp_inv _ _ p x)) x @ T =
+    fun A B eq ->
+        match eq at a b p -> (x : b) -> Id _ (transp _ _ p (transp_inv _ _ p x)) x with
+        | refl _ -> fun _ -> refl _
+
+
 let next : (A : U<0>) -> A -> << l | A >> @ T =
     fun A x -> mod l x
 
@@ -54,10 +69,23 @@ let consT
     = fun A x xs ->
         transp_inv _ _ (lob1Beta (StrRec _)) (pair (x, xs))
 
+; Meta: A :d U, x :1 << d | A >>, lock d |- ?wot : U
+; Prob: A :d U, x :1 << d | A >> |- ?h1 = lob1 ... ?wot[A, x, xs]
+; Use of x is in ctx A :d U, x :1 << d | A >>, lock d |- x
+
+; Meta: A :d U, x :1 << d | A >>, lock d |- ?wot : U
+; A :d U, lock d |- ?wot[A] : U
+; Use of a is in ctx A :d U, lock d |- ?wod[A] uh oh
+
 let unconsT
     : (A : {d | U<0>}) -> (StrT A) -> (<< d | A >> * << l | StrT A >>) @ T
     = fun A xs ->
         transp _ _ (lob1Beta (StrRec _)) xs
+
+let unconsT_of_consT :
+    (A : {d | U<0>}) -> (x : << d | A >>) -> (xs : << l | StrT A >>) ->
+    Id _ (unconsT _ (consT _ x xs)) (pair (x, xs)) @ T =
+    fun A x xs -> transp_iso2 _ _ (lob1Beta (StrRec A)) (pair (x, xs))
 
 let NatStrT : U<0> @ T = StrT Nat
 
@@ -92,3 +120,15 @@ let tail' : (A : U<0>) -> (Str A) -> Str A @ S =
         letmod idm mod g (xs0) <- xs at _ -> Str A in
         letmod g mod l (xs1) <- snd (unconsT _ xs0) at _ -> Str A in
         mod g xs1
+
+let cons : (A : U<0>) -> A -> (Str A) -> Str A @ S =
+    fun A x xs ->
+        letmod idm mod g (xs0) <- xs at _ -> Str A in
+        mod g (consT _ (mod d x) (mod l xs0))
+
+let head_of_cons :
+    (A : U<0>) -> (x : A) -> (xs : Str A) ->
+    Id _ (head _ (cons _ x xs)) x @ S =
+    fun A x xs ->
+        letmod idm mod g (xs0) <- xs at xs1 -> Id _ (head _ (cons _ x xs1)) x in
+        ?hc

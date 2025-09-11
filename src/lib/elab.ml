@@ -10,11 +10,11 @@ type modality = MT.m
 open Unify
 
 (* Errors *)
-let while_elaborating (n : Concrete_syntax.ident) (f : unit -> 'a) : 'a =
+let while_elaborating ~size (n : Concrete_syntax.ident) (f : unit -> 'a) : 'a =
     try
         f ()
     with
-    | Elab_error e -> raise (Elab_error (While_elaborating (n, e)))
+    | Elab_error e -> raise (Elab_error (While_elaborating (n, size, e)))
 
 (* Elaboration *)
 
@@ -56,7 +56,7 @@ and check
         let (var, new_env) = add_var ~size ~mode ~mu ~tp:dom env in
         let sem_cod = Nbe.do_clos' cod var in
         let t' = check ~env:new_env ~size:(size + 1) ~tp:sem_cod ~term:t ~mode in
-        Lam t'
+        Lam (mu, t')
 
     | Hole name, tp ->
         (* Printf.printf "got check hole\n%!"; *)
@@ -129,7 +129,8 @@ and check
 
     | _ ->
         let (tp', term') = infer ~env ~size ~term ~mode in
-        unify_catch ~size ~term tp tp' Expected_inferred (unify_tp ~env ~size ~mode);
+        unify_catch ~size ~term tp tp' Expected_inferred
+            (unify_tp ~env ~size ~mode);
         term'
 
 and infer
@@ -154,7 +155,7 @@ and infer
         let (def_tp, def') = infer ~env ~size ~term:def ~mode in
         let sem_def = Nbe.eval def' (env_to_sem_env env) in
         let new_env =
-            add_term ~md:mode ~term:sem_def ~mu:MT.idm ~tp:def_tp ~defined:true env in
+            add_term ~size ~md:mode ~term:sem_def ~mu:MT.idm ~tp:def_tp ~defined:true env in
         let (body_tp, body') = infer ~env:new_env ~size:(size + 1) ~term:body ~mode in
         (body_tp, S.Let (def', body'))
 
@@ -255,7 +256,7 @@ and infer
 
         let (tp, body') = infer ~env:new_env ~size:(size + 1) ~term:body ~mode in
         let tp' = Nbe.read_back_tp (size + 1) tp in
-        (Pi (mu, argtp, Clos { term = tp'; env = env_to_sem_env env }), Lam body')
+        (Pi (mu, argtp, Clos { term = tp'; env = env_to_sem_env env }), Lam (mu, body'))
 
     | Id (tp, x, y) ->
         let tp' = check_tp ~env ~size ~term:tp ~mode in
@@ -332,7 +333,20 @@ and infer
 
         let (inner_tp, left, right) = match Nbe.force size eq_tp with
             | Id (tp, x, y) -> (tp, x, y)
-            | eq_tp' -> S.todo "infer J/unify with metavariables"
+            | eq_tp' ->
+                let tp = Meta.fresh_meta_tp env size in
+                let sem_tp = Nbe.eval tp sem_env in
+
+                let x = Meta.fresh_meta env size tp sem_tp in
+                let sem_x = Nbe.eval x sem_env in
+
+                let y = Meta.fresh_meta env size tp sem_tp in
+                let sem_y = Nbe.eval y sem_env in
+
+                unify_catch ~size ~term:j.eq
+                    (Id (sem_tp, sem_x, sem_y)) eq_tp' Expected_inferred
+                    (unify_tp ~env ~size ~mode);
+                (sem_tp, sem_x, sem_y)
         in
         let (mot_var1, mot_env1) =
             add_var ~size ~mode ~mu:MT.idm ~tp:inner_tp env in
@@ -347,16 +361,15 @@ and infer
             add_var ~size ~mode ~mu:MT.idm ~tp:inner_tp env in
         let refl_tp =
             Nbe.eval motive
-                (D.Val (Lazy.from_val @@ D.Refl refl_var)
-                    :: D.Val (Lazy.from_val @@ refl_var)
-                    :: D.Val (Lazy.from_val refl_var) :: sem_env)
+                (D.value (D.Refl refl_var)
+                    :: D.value refl_var :: D.value refl_var :: sem_env)
         in
         let refl =
             check ~env:refl_env ~size:(size + 1) ~tp:refl_tp ~term:j.refl ~mode in
 
         let tp = Nbe.eval motive
-            (D.Val (lazy (Nbe.eval eq sem_env)) :: D.Val (Lazy.from_val right)
-                :: D.Val (Lazy.from_val left) :: sem_env) in
+            (D.Val (lazy (Nbe.eval eq sem_env))
+                :: D.value right :: D.value left :: sem_env) in
         (tp, J (motive, refl, eq))
 
     | Sig (fst, snd) ->

@@ -17,7 +17,9 @@ let main input =
   | Load.Parse_error s -> Printf.eprintf "Frontend error: %s\n" s; 1
   | Check.Type_error e -> Printf.eprintf "Type error\n%s\n" (Check.pp_error e); 1
   | Syntax.Illformed -> Printf.eprintf "Syntax error.\n"; 1
-  | Mode_theory.Modality_error str -> Printf.eprintf "Modality error: %s\n" str; 1
+  | Mode_theory.Modality_error str ->
+    Printexc.print_backtrace stdout;
+    Printf.eprintf "Modality error: %s\n" str; 1
   | Unify.Elab_error err -> Printf.eprintf "Elaboration error.\n%s\n" (Unify.pp_error err); 1
 
 let input_file =
