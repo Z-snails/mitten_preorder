@@ -17,6 +17,7 @@ and clos2 = Clos2 of {term : Syntax.t [@printer pp_syntax]; env : env [@opaque]}
 and clos3 = Clos3 of {term : Syntax.t [@printer pp_syntax]; env : env [@opaque]} [@@deriving show]
 and t =
   | Lam of m * clos
+  (* tp is needed by do_ap in nbe.ml *)
   | Neutral of { tp : t [@opaque]; term : ne }
   | Nat
   | Zero

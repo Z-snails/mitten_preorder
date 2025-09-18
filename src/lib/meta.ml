@@ -116,8 +116,11 @@ let solve (m : S.metavar) (tm : Syntax.t) : unit =
 let all_metas () : (S.metavar * entry) list =
     List.map (function (m, e) -> (S.Metavar (m, e.name), e)) (MetaMap.bindings !store)
 
-let add_used_by (entry : entry) (S.Metavar (n, _)) =
-    entry.used_by <- MetaSet.add n entry.used_by
+let add_used_by ~usee ~user:(S.Metavar (n, _) as user) =
+    let entry = lookup usee in
+    entry.used_by <- MetaSet.union
+        (MetaSet.add n entry.used_by) (* user uses usee *)
+        (lookup user).used_by (* Anything that uses user uses usee *)
 
 let used_by (entry : entry) =
     List.map

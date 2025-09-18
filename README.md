@@ -169,6 +169,10 @@ Things to prove that aren't about solving metavariables:
 
 - Next week --- split time hacking on mitten and working on talk
 - After that --- talk, prove things about most general unifiers and write report
+- Today --- read decidability of conversion for type theory in type theory Abel
+  Skip section 3
+  Skip proofs in section 4
+  Then read daniel's note
 
 # Log
 

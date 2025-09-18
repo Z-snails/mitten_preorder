@@ -87,6 +87,7 @@ type elab_error =
     | Occurs_check
     | Non_linear of int
     | Escaped_var of int
+    | Cant_prune of int
 
     (* Metadata *)
     | While_elaborating of Concrete_syntax.ident * int * elab_error
@@ -152,6 +153,8 @@ let rec pp_error (e : elab_error) = match e with
     | Escaped_var v ->
         (* TODO: print variable name *)
         Printf.sprintf "Escaping variable %d is not bound in the solution" v
+    | Cant_prune v ->
+        Printf.sprintf "Can't prune metavariable, variable %d occurs in type" v
     | While_elaborating (n, lvl, e) ->
         Printf.sprintf "While elaborating %s (level %d)\n%s" n lvl (pp_error e)
 
@@ -173,15 +176,20 @@ module IntSet = Set.Make(Int)
 
 let unify_error ?tp left right = elab_error (Unify_error { tp; left; right })
 
+(** A partial renaming from dom -> cod *)
 type pren =
     { dom_size: int
     ; cod_size: int
-    ; map: (int * modality) IntMap.t
-    ; non_linear: IntSet.t }
+    (* Maps levels from cod -> dom *)
+    ; map: int IntMap.t
+    (* Set of levels in cod which are non-linear *)
+    ; non_linear_cod: IntSet.t
+    (* Set of levels in dom which are non-linear *)
+    ; non_linear_dom: IntSet.t }
 
 let show_pren (pren : pren) : string =
     String.concat ", " (List.map
-        (fun (x, (y, _)) -> Printf.sprintf "%d |-> %d" x y)
+        (fun (x, y) -> Printf.sprintf "%d |-> %d" x y)
         (IntMap.bindings pren.map))
 
 (** Check a delayed substitution and spine are a partial renaming,
@@ -209,16 +217,25 @@ let invert
 
     (** Add a variable to a partial renaming. If it already exists, then move
         it to the set of non-linear variables *)
-    let add_var ~var ~mu acc : pren =
-        if IntMap.mem var acc.map
-        then
-            { dom_size = acc.dom_size + 1
-            ; cod_size = acc.cod_size
-            ; map = IntMap.remove var acc.map
-            ; non_linear = IntSet.add var acc.non_linear }
-        else { acc with
-            map = IntMap.add var (acc.dom_size, mu) acc.map;
-            dom_size = acc.dom_size + 1 }
+    let add_var ~cod_lvl ~mu acc : pren =
+        if IntSet.mem cod_lvl acc.non_linear_cod
+        then { acc with
+            dom_size = acc.dom_size + 1;
+            non_linear_dom = IntSet.add acc.dom_size acc.non_linear_dom }
+        else match IntMap.find_opt cod_lvl acc.map with
+            | Some dom_lvl ->
+                { dom_size = acc.dom_size + 1
+                ; cod_size = acc.cod_size
+                ; map = IntMap.remove cod_lvl acc.map
+                ; non_linear_cod = IntSet.add cod_lvl acc.non_linear_cod
+                ; non_linear_dom =
+                    acc.non_linear_dom
+                        |> IntSet.add dom_lvl
+                        |> IntSet.add acc.dom_size }
+            | None ->
+                { acc with
+                    map = IntMap.add cod_lvl acc.dom_size acc.map;
+                    dom_size = acc.dom_size + 1 }
     in
 
     (** Increment dom_size to account for top-level variables *)
@@ -229,15 +246,15 @@ let invert
         match spine with
         | [] -> Ok acc
         | Ap (meta_mod, Normal x) :: spine' ->
-            let* (prob_mod, var) = unwrap_var x.term in
+            let* (prob_mod, cod_lvl) = unwrap_var x.term in
             (* let meta_lock = MT.idm in *)
             (* let prob_lock = nth_cell prob_env var in *)
-            let* _ = assert_res (not @@ IntMap.mem var acc.map) (Non_linear var) in
+            let* _ = assert_res (not @@ IntMap.mem cod_lvl acc.map) (Non_linear cod_lvl) in
             (* let* _ = assert_res *)
             (*     (MT.eq_mod meta_mod prob_mod && MT.eq_mod prob_lock meta_lock) *)
             (*     (Not_identity_2cell *)
             (*         { prob_mod; prob_lock; meta_mod; meta_lock; variable = var }) in *)
-            go_spine spine' (add_var ~var ~mu:meta_mod acc)
+            go_spine spine' (add_var ~cod_lvl:cod_lvl ~mu:meta_mod acc)
         | e :: _ -> Error (Not_renaming (Right e))
     in
 
@@ -249,42 +266,27 @@ let invert
         | (Term { defined = true } | TopLevel _) :: env', _ :: sub' ->
             go_sub env' sub' (add_top_level acc)
         | Term { defined = false; mu = meta_mod } :: env', lazy (Normal x) :: sub' ->
-            let* (prob_mod, var) = unwrap_var x.term in
+            let* (prob_mod, cod_lvl) = unwrap_var x.term in
             (* let meta_lock = Meta.Check_env.locks env' in *)
             (* let prob_lock = nth_cell prob_env var in *)
-            let* _ = assert_res (not @@ IntMap.mem var acc.map) (Non_linear var) in
+            let* _ = assert_res (not @@ IntMap.mem cod_lvl acc.map) (Non_linear cod_lvl) in
             (* let* _ = assert_res *)
             (*     (MT.eq_mod prob_mod meta_mod && MT.eq_mod prob_lock meta_lock) *)
             (*     (Not_identity_2cell *)
             (*         { prob_mod; prob_lock; meta_mod; meta_lock; variable = var }) in *)
-            go_sub env' sub' (add_var ~var ~mu:meta_mod acc)
+            go_sub env' sub' (add_var ~cod_lvl ~mu:meta_mod acc)
         | _ -> failwith "Unreachable"
     in
 
     go_sub (List.rev meta_env) sub
-        { dom_size = 0; cod_size = prob_size
-        ; map = IntMap.empty; non_linear = IntSet.empty }
+        { dom_size = 0; cod_size = prob_size ; map = IntMap.empty
+        ; non_linear_cod = IntSet.empty; non_linear_dom = IntSet.empty }
 
 (** An environment that only tracks modalities, not types *)
 type mod_env_head =
     | Tm of modality option
     | Lock of modality
 type mod_env = mod_env_head list
-
-type solve_ctx =
-    { env: mod_env; prob_size: int; meta_size: int; rigid: bool
-    ; occurs_check: S.metavar option; pren: pren option }
-
-let lift (mu : modality option) (ctx : solve_ctx) =
-    { ctx with
-        env = Tm mu :: ctx.env;
-        prob_size = ctx.prob_size + 1;
-        meta_size = ctx.meta_size + 1;
-    }
-let lift_idm = lift (Some MT.idm)
-
-let lock (mu : modality) (ctx : solve_ctx) =
-    { ctx with env = Lock mu :: ctx.env }
 
 let rec env_to_mod_env env (sp : D.elim list) = match sp, env with
     | [], [] -> []
@@ -304,98 +306,141 @@ let rec nth_cell (env : mod_env) (i : int) : modality option * modality =
         let (nu, locks) = nth_cell env' i in
         (nu, MT.compm (locks, mu))
 
-let check_var (ctx : solve_ctx) (ix : int) =
-    let ix' = match ctx.pren with
-        | Some pren ->
-            let cod_lvl = D.ix_to_lvl ~size:ctx.prob_size ~ix in
-            begin match IntMap.find_opt cod_lvl pren.map with
-            | Some (meta_lvl, _) -> D.lvl_to_ix ~size:ctx.meta_size ~lvl:meta_lvl
-            | None ->
-                if cod_lvl < pren.cod_size
-                then if IntSet.mem cod_lvl pren.non_linear
-                        then elab_error (Non_linear cod_lvl)
-                        else elab_error (Escaped_var cod_lvl)
-                else ix (* not free in codomain *)
-            end
-        | None -> ix
-    in
+type 'a pass =
+    { check_var: 'a -> int -> unit
+    ; check_meta: 'a -> S.metavar -> 'a
+    ; lift : modality option -> 'a -> 'a
+    ; lock : modality -> 'a -> 'a }
 
-    let lvl = D.ix_to_lvl ~size:ctx.meta_size ~ix:ix' in
-    let (mu, locks) = nth_cell ctx.env ix' in
-    match mu with
-    | Some mu ->
-        if ctx.rigid && not (MT.leq mu locks)
-            then elab_error
-                (Inaccessible_in_solution { mu; locks; var = lvl })
-    | None -> ()
-
-let rec check_vars (ctx : solve_ctx) (tm : Syntax.t) =
+let rec do_pass (pass : 'a pass) (ctx : 'a) (tm : Syntax.t) =
+    let lift_idm = pass.lift (Some MT.idm) in
     match tm with
-    | Syntax.Var ix -> check_var ctx ix
+    | Syntax.Var ix -> pass.check_var ctx ix
     | Syntax.Let (tm, body) ->
-        check_vars ctx tm;
-        check_vars (ctx |> lift_idm) body
+        do_pass pass ctx tm;
+        do_pass pass (ctx |> lift_idm) body
     | Syntax.Check (tm, tp) ->
-        check_vars ctx tm; check_vars ctx tp
+        do_pass pass ctx tm; do_pass pass ctx tp
     | Syntax.Nat -> ()
     | Syntax.Zero -> ()
-    | Syntax.Suc t -> check_vars ctx t
+    | Syntax.Suc t -> do_pass pass ctx t
     | Syntax.NRec (mot, zero, suc, scr) ->
-        check_vars (ctx |> lift_idm) mot;
-        check_vars ctx zero;
-        check_vars (ctx |> lift_idm |> lift_idm) suc;
-        check_vars ctx scr
+        do_pass pass (ctx |> lift_idm) mot;
+        do_pass pass ctx zero;
+        do_pass pass (ctx |> lift_idm |> lift_idm) suc;
+        do_pass pass ctx scr
     | Syntax.Pi (mu, dom, cod) ->
-        check_vars (ctx |> lock mu) dom;
-        check_vars (ctx |> lift (Some mu)) cod
-    | Syntax.Lam (mu, t) -> check_vars (ctx |> lift (Some mu)) t
+        do_pass pass (ctx |> pass.lock mu) dom;
+        do_pass pass (ctx |> pass.lift (Some mu)) cod
+    | Syntax.Lam (mu, t) -> do_pass pass (ctx |> pass.lift (Some mu)) t
     | Syntax.Ap (mu, f, x) ->
-        check_vars ctx f;
-        check_vars (ctx |> lock mu) x
+        do_pass pass ctx f;
+        do_pass pass (ctx |> pass.lock mu) x
     | Syntax.Sig (fst, snd) ->
-        check_vars ctx fst;
-        check_vars (ctx |> lift_idm) snd
+        do_pass pass ctx fst;
+        do_pass pass (ctx |> lift_idm) snd
     | Syntax.Pair (fst, snd) ->
-        check_vars ctx fst;
-        check_vars ctx snd
-    | Syntax.Fst p -> check_vars ctx p
-    | Syntax.Snd p -> check_vars ctx p
+        do_pass pass ctx fst;
+        do_pass pass ctx snd
+    | Syntax.Fst p -> do_pass pass ctx p
+    | Syntax.Snd p -> do_pass pass ctx p
     | Syntax.Id (tp, x, y) ->
-        check_vars ctx tp;
-        check_vars ctx x;
-        check_vars ctx y
-    | Syntax.Refl t -> check_vars ctx t
+        do_pass pass ctx tp;
+        do_pass pass ctx x;
+        do_pass pass ctx y
+    | Syntax.Refl t -> do_pass pass ctx t
     | Syntax.J (mot, refl, scr) ->
-        check_vars (ctx |> lift_idm |> lift_idm |> lift_idm) mot;
-        check_vars (ctx |> lift_idm) refl;
-        check_vars ctx scr
+        do_pass pass (ctx |> lift_idm |> lift_idm |> lift_idm) mot;
+        do_pass pass (ctx |> lift_idm) refl;
+        do_pass pass ctx scr
     | Syntax.Uni _ -> ()
-    | Syntax.TyMod (mu, t) -> check_vars (ctx |> lock mu) t
-    | Syntax.Mod (mu, t) -> check_vars (ctx |> lock mu) t
+    | Syntax.TyMod (mu, t) -> do_pass pass (ctx |> pass.lock mu) t
+    | Syntax.Mod (mu, t) -> do_pass pass (ctx |> pass.lock mu) t
     | Syntax.Letmod (mu, nu, mot, body, scr) ->
-        check_vars (ctx |> lift_idm) mot;
-        check_vars (ctx |> lift_idm) body;
-        check_vars (ctx |> lock mu) scr
-    (* An axiom can't possibly contain any local variables *)
+        do_pass pass (ctx |> lift_idm) mot;
+        do_pass pass (ctx |> lift_idm) body;
+        do_pass pass (ctx |> pass.lock mu) scr
+    (* An axiom can't contain local variables *)
     | Syntax.Axiom (ax, tp) -> ()
     | Syntax.Meta (m, sub) ->
-        if Some m = ctx.occurs_check then elab_error Occurs_check;
-
+        let ctx' = pass.check_meta ctx m in
         let entry = Meta.lookup m in
-        Option.iter (fun meta -> Meta.add_used_by entry meta) ctx.occurs_check;
-        let ctx' = { ctx with rigid = false } in
-        check_vars_sub ctx' (List.rev entry.context) sub
+        do_pass_sub pass ctx' (List.rev entry.context) sub
 
-and check_vars_sub (ctx : solve_ctx) (env : env) (sub : Syntax.t list) =
+and do_pass_sub (pass : 'a pass) (ctx : 'a) (env : env) (sub : Syntax.t list) =
     match env, sub with
     | [], [] -> ()
-    | TopLevel _ :: ctx', _ :: sub' -> check_vars_sub ctx ctx' sub'
-    | Term { mu } :: ctx', t :: sub' ->
-        (* check_vars pren (Lock mu :: env) size false t; *)
-        check_vars ctx t;
-        check_vars_sub ctx ctx' sub'
-    | M _ :: ctx', _ -> check_vars_sub ctx ctx' sub
+    | TopLevel _ :: env', _ :: sub' -> do_pass_sub pass ctx env' sub'
+    | Term { mu } :: env', t :: sub' ->
+        do_pass pass ctx t;
+        do_pass_sub pass ctx env' sub'
+    | M _ :: ctx', _ -> do_pass_sub pass ctx ctx' sub
     | _ -> failwith "Unreachable"
+
+type solve_ctx =
+    { env: mod_env
+    ; prob_size: int
+    ; meta_size: int
+    ; rigid: bool
+    ; occurs_check: S.metavar option
+    ; pren: pren option }
+
+(** A pass to check that variables are accessible in the solution *)
+let check_solution_pass : solve_ctx pass = {
+    check_var = (fun ctx ix ->
+        let ix' = match ctx.pren with
+            | Some pren ->
+                let cod_lvl = D.ix_to_lvl ~size:ctx.prob_size ~ix in
+                begin match IntMap.find_opt cod_lvl pren.map with
+                | Some meta_lvl -> D.lvl_to_ix ~size:ctx.meta_size ~lvl:meta_lvl
+                | None ->
+                    if cod_lvl < pren.cod_size
+                    then if IntSet.mem cod_lvl pren.non_linear_cod
+                            then elab_error (Non_linear cod_lvl)
+                            else elab_error (Escaped_var cod_lvl)
+                    else ix (* not free in codomain *)
+                end
+            | None -> ix
+        in
+
+        let lvl = D.ix_to_lvl ~size:ctx.meta_size ~ix:ix' in
+        let (mu, locks) = nth_cell ctx.env ix' in
+        match mu with
+        | Some mu ->
+            if ctx.rigid && not (MT.leq mu locks)
+                then elab_error
+                    (Inaccessible_in_solution { mu; locks; var = lvl })
+                | None -> ());
+
+    check_meta = (fun ctx m ->
+        match ctx.occurs_check with
+        | Some meta ->
+            if m = meta then elab_error Occurs_check;
+            Meta.add_used_by ~usee:m ~user:meta;
+            { ctx with rigid = false }
+        | None -> { ctx with rigid = false });
+
+    lift = (fun mu ctx ->
+        { ctx with
+            env = Tm mu :: ctx.env;
+            prob_size = ctx.prob_size + 1;
+            meta_size = ctx.meta_size + 1 });
+
+    lock = (fun mu ctx -> { ctx with env = Lock mu :: ctx.env });
+}
+
+type prune_ctx = { non_linear: IntSet.t; size: int }
+
+let can_prune_pass : prune_ctx pass = {
+    check_var = (fun ctx ix ->
+        let lvl = D.ix_to_lvl ~size:ctx.size ~ix in
+        if IntSet.mem lvl ctx.non_linear then
+            elab_error (Cant_prune lvl);
+    );
+    check_meta = (fun ctx _ -> ctx); (* TODO prune the encountered metavariable? *)
+    lift = (fun _ ctx -> { ctx with size = ctx.size + 1 });
+    lock = (fun _ ctx -> ctx);
+}
 
 (** Apply a partial renaming to a term, also checking for occurances of a given metavariable *)
 let apply_pren
@@ -410,7 +455,7 @@ let apply_pren
         | TopLevel { term } :: env' -> D.value term :: create_env env'
         | Term { level; tp } :: env' ->
             let v = match IntMap.find_opt level pren.map with
-            | Some (v', _) -> Lazy.from_val (D.mk_var tp v')
+            | Some v' -> Lazy.from_val (D.mk_var tp v')
             | None -> lazy (failwith "Unreachable: escaped/non-linear variable")
             in D.Val v :: create_env env'
         | M mu :: env' -> M mu :: create_env env'
@@ -420,7 +465,8 @@ let apply_pren
     let tm = Nbe.read_back_nf pren.cod_size (Normal { tp; term }) in
     (* Printf.printf "while inverting, got term\n%s\n%!" (Syntax.pp tm); *)
     try
-        check_vars
+        do_pass
+            check_solution_pass
             { env = env_to_mod_env entry.context spine
             ; prob_size = size
             ; meta_size = entry.size + List.length spine
@@ -498,7 +544,8 @@ let solve
         let tm = Option.get entry.value in
         let tm' = Meta.remove_solved entry.context tm in
         try
-            check_vars
+            do_pass
+                check_solution_pass
                 { prob_size = entry.size
                 ; meta_size = entry.size
                 ; env = env_to_mod_env entry.context []
