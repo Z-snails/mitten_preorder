@@ -80,6 +80,14 @@ and check
         let snd' = check ~env ~size ~tp:snd_tp ~term:snd ~mode in
         Pair (fst', snd')
 
+    | Refl t, (Id (inner_tp, _, _) as tp) ->
+        let sem_env = env_to_sem_env env in
+        let t' = check ~env ~size ~tp:inner_tp ~term:t ~mode in
+        let sem_t = Nbe.eval t' sem_env in
+        unify_catch ~size ~term tp (Id (inner_tp, sem_t, sem_t)) Expected_inferred
+            (unify_tp ~env ~size ~mode);
+        Refl t'
+
     (* TODO: this doesn't work since if the scrutinee is a variable then it
        appears in the context of the metavariable in the motive twice. Pruning
        would solve this in for non-dependent motives *)

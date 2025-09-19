@@ -83,17 +83,19 @@ let trans_eq :
         Id (x -> x)
             (fun a -> transport1_inv x y p (transport1 x y p a))
             (fun a -> a) with
-    | refl z -> refl (fun {idm, x} -> x)
+    | refl z -> refl (fun x -> x)
 
 let trans_eq_inv :
     (A : U<0>) -> (B : U<0>) -> (eq : Id U<0> A B) ->
-    Id (B -> B) (fun b -> transport1 A B eq (transport1_inv A B eq b)) (fun {idm, b} -> b) @ T =
+    Id (B -> B)
+        (fun b -> transport1 A B eq (transport1_inv A B eq b))
+        (fun b -> b) @ T =
     fun A B eq ->
     match eq at x y p ->
         Id (y -> y)
             (fun a -> transport1 x y p (transport1_inv x y p a))
-            (fun {idm, a} -> a) with
-    | refl z -> refl (fun {idm, a} -> a)
+            (fun a -> a) with
+    | refl z -> refl (fun a -> a)
 
 let trans_eq1 : (A : U<0>) -> (B : U<0>) -> (eq : Id U<0> A B) -> (a : A) -> Id A (transport1_inv A B eq (transport1 A B eq a)) a @ T =
     fun A B eq a -> happly A
@@ -121,7 +123,7 @@ let dup_inv : (A : {box . box | U<0>}) -> << box | << box | A >> >> -> << box | 
     letmod box mod box (z) <- y at z -> << box | A >> in
     mod (box . box) z
 
-normalize dup_inv {box . box, Nat} at << box | << box | Nat >> >> -> << box | Nat >> @ T
+normalize dup_inv Nat at << box | << box | Nat >> >> -> << box | Nat >> @ T
 
 
 ;; ------------------- Modal elimination tests ----------------------
@@ -150,11 +152,11 @@ axiom lob1 : ({l | U<0>} -> U<0>) -> U<0> @ T
 axiom lob_beta :
   (A : U<0>) ->
   (f : {l | A} -> A) ->
-  Id A (lob A f) (letmod idm mod l (x) <- next A (lob A f) at z -> A in f {l, x})
+  Id A (lob A f) (letmod idm mod l (x) <- next A (lob A f) at z -> A in f x)
   @ T
 axiom lob1_beta :
   (f : {l | U<0>} -> U<0>) ->
-  Id U<0> (lob1 f) (letmod idm mod l (x) <- next1 (lob1 f) at z -> U<0> in f {l, x})
+  Id U<0> (lob1 f) (letmod idm mod l (x) <- next1 (lob1 f) at z -> U<0> in f x)
   @ T
 
 ;; -------------- Guarded Streams -----------------------
@@ -263,7 +265,7 @@ let head : (A : U<0>) -> (stream A) -> A @ S =
 let tail : (A : U<0>) -> (stream A) -> stream A @ S =
     fun A str -> letmod idm mod g (gstr) <- str at _ -> stream A in
                  comp_g-l
-                    {g, (gstream << d | A >>)}
+                    (gstream << d | A >>)
                     (mod g (gtail (<< d | A >>) gstr))
 
 let cons : (A : U<0>) -> A -> (stream A) -> stream A @ S =
@@ -283,15 +285,15 @@ let stream_uni_helper :
                     (mod l (g (mod d (snd (f t))))))
 
 let stream_uni : (A : U<0>) -> (S : U<0>) -> (f : (S -> A * S)) -> S -> stream A @ S =
-    fun A S f s -> mod g (stream_uni_helper {d , A} {d , S} {d , f} (mod d s))
+    fun A S f s -> mod g (stream_uni_helper A S f (mod d s))
 
 ;; Not sure what is failing here...
 ;;let cons_eq : (A : U<0>) -> (s : stream A) -> Id (stream A) (cons A (head A s) (tail A s)) s @ S =
 ;;    fun A str -> letmod idm (fun s -> Id (stream A) (cons A (head A s) (tail A s)) s) mod g (gstr) <- str in
-;;                 crisp_g {g , gstream << d | A >>}
-;;                         {g , gcons << d | A >> (ghead << d | A >> gstr) (gtail << d | A >> gstr)}
-;;                         {g , gstr}
-;;                         {g , gcons_eq (<< d | A >>) (gstr)}
+;;                 crisp_g (gstream << d | A >>)
+;;                         (gcons << d | A >> (ghead << d | A >> gstr) (gtail << d | A >> gstr))
+;;                         gstr
+;;                         (gcons_eq (<< d | A >>) (gstr))
 
 
 
@@ -304,10 +306,10 @@ let head_eq :
             (comp_g-d A)
             (mod g (ghead (<< d | A >>) (gcons (<< d | A >>) (mod d a)(mod l gstr))))
             (mod g (mod d a))
-            (crisp_g {g , << d | A >>}
-                {g , ghead (<< d | A >>) (gcons (<< d | A >>) (mod d a) (mod l gstr))}
-                {g , mod d a}
-                {g , ghead_eq (<< d | A >>) (mod d a) (mod l gstr)})
+            (crisp_g (<< d | A >>)
+                (ghead (<< d | A >>) (gcons (<< d | A >>) (mod d a) (mod l gstr)))
+                (mod d a)
+                (ghead_eq (<< d | A >>) (mod d a) (mod l gstr)))
 
 let tail_eq :
     (A : U<0>) -> (a : A) -> (s : stream A) ->
@@ -316,13 +318,13 @@ let tail_eq :
         letmod idm mod g (gstr) <- str at s -> Id (stream A) (tail A (cons A a s)) s in
         ap (<< g | << l | (gstream << d | A >>) >> >>)
             (stream A)
-            (comp_g-l {g, gstream << d | A >>})
+            (comp_g-l (gstream << d | A >>))
             (mod g (gtail (<< d | A >>) (gcons (<< d | A >>) (mod d a)(mod l gstr))))
             (mod g (mod l gstr))
-            (crisp_g {g , << l | gstream << d | A >> >>}
-                {g , gtail (<< d | A >>) (gcons (<< d | A >>) (mod d a) (mod l gstr))}
-                {g , mod l gstr}
-                {g , gtail_eq (<< d | A >>) (mod d a) (mod l gstr)})
+            (crisp_g << l | gstream << d | A >> >>
+                (gtail (<< d | A >>) (gcons (<< d | A >>) (mod d a) (mod l gstr)))
+                (mod l gstr)
+                (gtail_eq (<< d | A >>) (mod d a) (mod l gstr)))
 
 
 let nth : Nat -> (stream Nat) -> Nat @ S =
@@ -374,19 +376,19 @@ let interleave : (gstream NatD) -> { l | (gstream NatD) } -> gstream NatD @ T =
             gcons NatD (ghead NatD gstr1)
                 (letmod idm mod l (open) <- gtail NatD gstr1
                     at z -> << l | gstream NatD >> in
-                (mod l (inleave gstr2 {l, open}))))
+                (mod l (inleave gstr2 open))))
 
 let paperfold : gstream NatD @ T =
-    lob (gstream NatD) (fun gstr -> interleave toggle {l, gstr})
+    lob (gstream NatD) (fun gstr -> interleave toggle gstr)
 
 ;; ------------------ Coinductive streams, in particular acausal definitions that cannot be done only using later -------------------------------
 
 
 let every2nd : (A : {d | U<0>}) -> {d | stream A} -> (gstream << d | A >>) @ T =
-    fun A -> lob ({d | stream A} -> (gstream << d | A >>)) (fun f str -> gcons (<< d | A>>) (mod d (head A str)) (mod l (f {d , (tail A (tail A str))})))
+    fun A -> lob ({d | stream A} -> (gstream << d | A >>)) (fun f str -> gcons (<< d | A>>) (mod d (head A str)) (mod l (f (tail A (tail A str)))))
 
 let every2nd_nat : (stream Nat) -> stream Nat @ S =
-    fun str -> mod g (every2nd {d, Nat} {d, str})
+    fun str -> mod g (every2nd Nat str)
 
 let evens : stream Nat @ S = every2nd_nat nats
 
